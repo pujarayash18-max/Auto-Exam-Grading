@@ -7,5 +7,6 @@ from app.models.profile import (
     FacultyClass, StudentProfile, StudentSubject
 )
 from app.models.exam import Exam, GradingScheme, ExamMaterial, ExamQuestion
+from app.models.viva import ExamRun, StudentVivaRun, StudentVivaAnswer, ExamTypeEnum, StudentVivaStatus
 
 # This file imports all models to make sure Alembic detects them

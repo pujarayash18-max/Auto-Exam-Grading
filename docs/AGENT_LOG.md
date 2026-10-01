@@ -81,3 +81,26 @@
 ### Known Gaps & Next Steps
 - The AI Generation `generate-questions` endpoint is a stub that needs actual prompt integration with LLM models.
 - "Manage Scheduled Exams" requires CRUD endpoints to delete or edit timings before start.
+
+## Phase 5 Review Gate
+
+**Review Date**: 2026-10-01
+**Agents Invoked**: 
+- Backend Architect
+- Realtime Collaboration Engineer (Simulated)
+- UI Designer
+
+### Backend Architect Findings
+- Implemented `/api/v1/viva/runs` to initialize an exam instance.
+- Verified roster endpoint `/api/v1/viva/runs/{run_id}/roster` properly fetches student profile and tracks the `StudentVivaStatus` (Pending, In Progress, Completed).
+- Integrated `StudentVivaRun` and `StudentVivaAnswer` schemas to track individual questions, expected vs actual answers, and STT transcripts.
+
+### Realtime Collaboration Engineer & UI Designer Findings
+- Designed `(faculty)/viva/page.tsx` as a unified controller for managing the Live Viva.
+- Included "Start Scheduled Test" pre-flight screen with Exam Type selection.
+- Roster table acts as a dispatch center to start/resume viva for each student.
+- Created "Live Viva Session" dark-mode interface with a pseudo-timer, live transcript visualizer, and "Pause Mic" / "End Viva" action buttons to fulfill `prompt.txt` requirements.
+
+### Known Gaps & Next Steps
+- Actual WebSockets or Audio Stream chunking needs to be wired to the `Pause Mic`/`Resume Mic` buttons for Speech-To-Text pipeline.
+- Grading calculations need to process the resulting transcript using the Grading Schema set in Phase 4.
