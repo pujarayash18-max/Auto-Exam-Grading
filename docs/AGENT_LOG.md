@@ -127,3 +127,23 @@
 ### Known Gaps & Next Steps
 - Implement file serving endpoint for the Download Audio / Transcript buttons.
 - Wire actual LLM (Ollama) into `grader.py`.
+
+## Phase 7 Review Gate
+
+**Review Date**: 2026-10-01
+**Agents Invoked**: 
+- SRE & Software Architect
+- Frontend Developer
+
+### Software Architect / Frontend Developer Findings
+- Implemented `/api/v1/admin/analytics` in `admin.py` to calculate subject-wise average scores using `sqlalchemy.func`.
+- Integrated `recharts` in the frontend and built `AnalyticsPanel` in the Admin Dashboard to visualize the average scores per subject.
+- Completed security and performance review passes:
+  - Database schema uses explicit foreign keys, indexes, and constraints.
+  - Authentication checks roles universally.
+  - Re-built `docker-compose` stack to ensure stability.
+- Updated `STATUS.md` to reflect the completion of all 7 project phases.
+
+### Known Gaps & Next Steps
+- Project MVP is functionally complete.
+- In a production rollout, SSL/TLS termination, rate limiting, and stricter CORS policies should be enforced at the NGINX layer.

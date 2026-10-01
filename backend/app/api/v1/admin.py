@@ -239,3 +239,38 @@ async def assign_faculty_classes(
         
     await db.commit()
     return {"msg": "Classes assigned successfully"}
+
+@router.get("/analytics")
+async def get_analytics(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    from sqlalchemy import func
+    from app.models.viva import StudentVivaRun, ExamRun
+    from app.models.exam import Exam
+
+    # Subject-wise analysis (Average Score)
+    subject_stats_res = await db.execute(
+        select(
+            Exam.subject_name,
+            func.avg(StudentVivaRun.total_score).label('avg_score'),
+            func.count(StudentVivaRun.id).label('total_students')
+        )
+        .join(ExamRun, Exam.id == ExamRun.exam_id)
+        .join(StudentVivaRun, ExamRun.id == StudentVivaRun.exam_run_id)
+        .where(StudentVivaRun.status == "completed")
+        .group_by(Exam.subject_name)
+    )
+    
+    subject_stats = []
+    for row in subject_stats_res.all():
+        subject_stats.append({
+            "subject": row.subject_name,
+            "avg_score": float(row.avg_score) if row.avg_score else 0,
+            "total_students": row.total_students
+        })
+        
+    return {
+        "subject_wise": subject_stats,
+        "class_wise": [] # Placeholder for now
+    }
