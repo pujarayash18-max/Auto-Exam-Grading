@@ -9,7 +9,9 @@ from app.api.deps import get_db, require_roles, get_current_user
 from app.models.user import User, RoleEnum
 from app.models.profile import FacultyProfile, StudentProfile, StudentClass
 from app.models.exam import Exam
-from app.models.viva import ExamRun, StudentVivaRun, ExamTypeEnum, StudentVivaStatus
+from app.models.viva import ExamRun, StudentVivaRun, StudentVivaAnswer, ExamTypeEnum, StudentVivaStatus
+from app.models.exam import GradingScheme
+from app.ai.grader import calculate_final_grade
 
 router = APIRouter()
 
@@ -113,7 +115,26 @@ async def finish_student_viva(
         
     sr.status = StudentVivaStatus.COMPLETED
     sr.completed_at = datetime.now(timezone.utc)
-    # TODO: Calculate grade based on GradingScheme
+    
+    # Calculate grade based on answers
+    answers_res = await db.execute(select(StudentVivaAnswer).where(StudentVivaAnswer.viva_run_id == viva_run_id))
+    answers = answers_res.scalars().all()
+    
+    total_score = sum([a.score_awarded for a in answers if a.score_awarded is not None])
+    
+    # Get GradingSchemes
+    run = await db.get(ExamRun, sr.exam_run_id)
+    exam = await db.get(Exam, run.exam_id)
+    schemes_res = await db.execute(select(GradingScheme).where(GradingScheme.exam_id == exam.id))
+    schemes = schemes_res.scalars().all()
+    
+    # Assume max_possible is questions count * 100 or something similar
+    max_possible = exam.questions_per_student * 100.0 if exam.questions_per_student else 100.0
+    
+    grade = await calculate_final_grade(total_score, max_possible, schemes)
+    
+    sr.total_score = total_score
+    sr.grade = grade
     
     await db.commit()
     return {"msg": "Student viva completed", "viva_run_id": sr.id}

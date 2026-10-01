@@ -104,3 +104,26 @@
 ### Known Gaps & Next Steps
 - Actual WebSockets or Audio Stream chunking needs to be wired to the `Pause Mic`/`Resume Mic` buttons for Speech-To-Text pipeline.
 - Grading calculations need to process the resulting transcript using the Grading Schema set in Phase 4.
+
+## Phase 6 Review Gate
+
+**Review Date**: 2026-10-01
+**Agents Invoked**: 
+- AI Engineer
+- Frontend Developer
+
+### AI Engineer Findings
+- Stubbed `backend/app/ai/grader.py` to evaluate student transcripts against expected answers and apply the grading schemas defined in Phase 4.
+- Implemented `/api/v1/results` API for Faculty to view grading output, manually override the grade or total score, and selectively publish results.
+- `StudentVivaRun` model was updated to include the `is_published` field to control visibility.
+
+### Frontend Developer Findings
+- Created `(faculty)/results/page.tsx` to handle the Results view. Faculty can search by Exam Run ID to see student scores, override marks, and toggle Publish status.
+- Implemented `(student)/dashboard/page.tsx` as per the Student Module requirement. It contains three functional tabs:
+  - Profile (Basic Info: Enrollment, GR, Dept).
+  - Recording & Transcripts (Displays only `is_published=True` results from the faculty, showing Grade, Score, and generic download action buttons).
+  - Scheduled Exams (Currently mocked list).
+
+### Known Gaps & Next Steps
+- Implement file serving endpoint for the Download Audio / Transcript buttons.
+- Wire actual LLM (Ollama) into `grader.py`.

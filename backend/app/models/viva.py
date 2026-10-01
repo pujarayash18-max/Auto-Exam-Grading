@@ -40,6 +40,7 @@ class StudentVivaRun(Base):
     
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
+    is_published = Column(Boolean, default=False)
     
     exam_run = relationship("ExamRun", back_populates="student_runs")
     student = relationship("StudentProfile")
