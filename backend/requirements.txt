@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+alembic
+asyncpg
+
+python-multipart
+argon2-cffi
+cryptography
+pypdf
+python-pptx
+httpx
+redis
+numpy
+PyJWT
+pydantic-settings
