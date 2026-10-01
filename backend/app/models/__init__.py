@@ -6,5 +6,6 @@ from app.models.profile import (
     Department, Class, FacultyProfile, FacultySubject,
     FacultyClass, StudentProfile, StudentSubject
 )
+from app.models.exam import Exam, GradingScheme, ExamMaterial, ExamQuestion
 
 # This file imports all models to make sure Alembic detects them

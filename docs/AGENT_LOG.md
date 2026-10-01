@@ -58,3 +58,26 @@
 ### Known Gaps & Next Steps
 - The data tables (CRUD for uploaded faculties/students/classes) need to be visualized in the frontend instead of just standard upload forms.
 - Need to finalize the migration execution since the `backend` docker image is still building.
+
+## Phase 4 Review Gate
+
+**Review Date**: 2026-10-01
+**Agents Invoked**: 
+- Backend Architect
+- UI Designer
+- Prompt Engineer (Preparing AI Question context)
+
+### Backend Architect Findings
+- Implemented `/api/v1/faculty/exams` and `materials` endpoints.
+- DB relationships map correctly to Faculty constraints: A faculty can only create exams for classes they are assigned to.
+- Added `ExamQuestion` and `GradingScheme` schemas mapped directly to exams to calculate scores out-of-the-box.
+- Added stub `POST` endpoint for AI Generation.
+
+### UI Designer Findings
+- Implemented standard, clean 3-tab layout for Faculty Dashboard: Schedule Exam, Upload Material, and Generate Questions.
+- Grading schemas inputs support dynamic add rows (A, B, O grades with flexible ranges).
+- Handled File upload component specifically targeting `.ppt`, `.pptx`, and `.pdf` files as requested by Phase 4.
+
+### Known Gaps & Next Steps
+- The AI Generation `generate-questions` endpoint is a stub that needs actual prompt integration with LLM models.
+- "Manage Scheduled Exams" requires CRUD endpoints to delete or edit timings before start.
