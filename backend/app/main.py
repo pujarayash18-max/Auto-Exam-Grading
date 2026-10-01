@@ -1,22 +1,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.config import settings
+from app.api.v1 import auth
 
-app = FastAPI(
-    title="AutoExamGrading API",
-    version="1.0.0",
-    description="Automated Viva Grading System"
-)
+app = FastAPI(title="AutoExamGrading API")
 
-# CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost"],
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.get("/")
-def read_root():
-    return {"message": "AutoExamGrading API is running"}
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}

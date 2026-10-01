@@ -1,8 +1,11 @@
-from sqlalchemy import Column, Integer, String, Text
+from sqlalchemy import Column, Integer, String, Text, CheckConstraint
 from .base import Base
 
 class SiteSettings(Base):
     __tablename__ = "site_settings"
+    __table_args__ = (
+        CheckConstraint('id = 1', name='site_settings_single_row_check'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     logo_path = Column(String, nullable=True)

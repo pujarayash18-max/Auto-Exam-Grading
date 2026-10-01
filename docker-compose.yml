@@ -8,6 +8,7 @@ services:
       POSTGRES_USER: viva_user
       POSTGRES_PASSWORD: viva_password
       POSTGRES_DB: viva_db
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5433:5432"
     volumes:

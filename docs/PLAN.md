@@ -55,8 +55,17 @@
 - **Git Workflow Master**: Branching strategy, `.gitattributes`.
 
 ## Approved Libraries
+- **Python Backend**:
+  - `fastapi`, `uvicorn[standard]`: Async web framework and ASGI server.
+  - `sqlalchemy[asyncio]`, `alembic`, `asyncpg`, `greenlet`: Async ORM, DB migrations, async PostgreSQL driver, and the greenlet lib required for SQLAlchemy async.
+  - `pydantic`, `pydantic-settings`: Data validation and environment settings management.
+  - `python-multipart`: To support OAuth2 `application/x-www-form-urlencoded` form data for login.
+  - `argon2-cffi`: The recommended hashing algorithm for passwords.
+  - `pyjwt`: For generating and verifying JWT access and refresh tokens.
+  - `redis`: Async driver to interact with Redis for IP/User lockouts and refresh token blocklists.
+- **Frontend**:
+  - `next`, `react`, `react-dom`, `tailwindcss`, `typescript`: Next.js 14 stack for SSR, API routes, and standard styling with TypeScript support.
 - **python-multipart**: FastAPI file uploads.
-- **argon2-cffi**: Argon2 hashing, used directly.
 - **cryptography**: Fernet encryption of temporary generated credentials.
 - **pypdf** or **pdfplumber**: PDF text extraction.
 - **python-pptx**: PPT/PPTX text extraction.
@@ -70,6 +79,14 @@
 AutoExamGrading/
   .gitattributes             # Ensure LF line endings on Windows
   frontend/                  # Next.js app
+    src/
+      app/
+        (auth)/
+          login/
+        (superadmin)/
+        (admin)/
+        (faculty)/
+        (student)/
   backend/
     app/
       api/v1/                
