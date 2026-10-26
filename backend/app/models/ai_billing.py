@@ -23,7 +23,7 @@ class AISettings(Base):
     merchant_upi_id = Column(String, default="autoexam.billing@icici", nullable=True)
     merchant_name = Column(String, default="AutoExam Examination Cell", nullable=True)
     gst_rate_percent = Column(Float, default=18.0, nullable=False)
-    gateway_mode = Column(String, default="HYBRID", nullable=False) # "RAZORPAY", "UPI_DIRECT", "YOUPI", "HYBRID"
+    gateway_mode = Column(String, default="YOUPI", nullable=False) # "YOUPI", "HYBRID", "RAZORPAY"
 
     # YouPI-PG Sovereign Gateway Configuration
     youpi_api_url = Column(String, default="http://localhost:6100", nullable=True)

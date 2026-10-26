@@ -182,14 +182,14 @@ async def get_ai_settings(db: AsyncSession = Depends(get_db)):
             "gemini": mask_key(settings_obj.gemini_api_key) if settings_obj.gemini_api_key else ("Configured via ENV" if env_gemini else "Not Configured"),
             "openai": mask_key(settings_obj.openai_api_key) if settings_obj.openai_api_key else ("Configured via ENV" if env_openai else "Not Configured"),
             "claude": mask_key(settings_obj.claude_api_key) if settings_obj.claude_api_key else ("Configured via ENV" if env_claude else "Not Configured"),
-            "razorpay": mask_key(active_rzp_key) if active_rzp_key else "Not Configured (Using Direct Gateway)"
+            "razorpay": mask_key(active_rzp_key) if active_rzp_key else "Not Configured (Using YouPI Sovereign Gateway)"
         },
         "has_razorpay_key": bool(active_rzp_key),
         "razorpay_key_id": active_rzp_key,
         "merchant_upi_id": settings_obj.merchant_upi_id or "autoexam.billing@icici",
         "merchant_name": settings_obj.merchant_name or "AutoExam Examination Cell",
         "gst_rate_percent": settings_obj.gst_rate_percent if settings_obj.gst_rate_percent is not None else 18.0,
-        "gateway_mode": settings_obj.gateway_mode or "HYBRID",
+        "gateway_mode": settings_obj.gateway_mode or "YOUPI",
         "youpi_api_url": settings_obj.youpi_api_url or "http://localhost:6100",
         "youpi_checkout_url": settings_obj.youpi_checkout_url or "http://localhost:7000",
         "youpi_merchant_id": settings_obj.youpi_merchant_id or "00000000-0000-0000-0000-000000000001",
@@ -531,8 +531,8 @@ async def create_payment_order(req: CreateOrderRequest, db: AsyncSession = Depen
     is_real_razorpay = False
 
 
-    # If Razorpay keys are configured and gateway mode is not locked to UPI_DIRECT or YOUPI
-    if razorpay_key_id and razorpay_key_secret and settings_obj.gateway_mode not in ["UPI_DIRECT", "YOUPI"]:
+    # If Razorpay keys are configured and gateway mode is locked to RAZORPAY_ONLY or HYBRID
+    if razorpay_key_id and razorpay_key_secret and settings_obj.gateway_mode == "RAZORPAY_ONLY":
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 rzp_res = await client.post(
@@ -557,14 +557,15 @@ async def create_payment_order(req: CreateOrderRequest, db: AsyncSession = Depen
             print(f"Razorpay order creation fallback: {rzp_err}")
 
     # Determine gateway mode & YouPI order session
-    is_youpi = (req.payment_method == "YOUPI" or settings_obj.gateway_mode == "YOUPI")
+    # Custom UPI gateway removed: YouPI Sovereign Gateway is the exclusive zero-fee UPI engine
+    is_youpi = not (is_real_razorpay and settings_obj.gateway_mode == "RAZORPAY_ONLY")
     youpi_payment_id = None
     youpi_checkout_url = None
 
     if is_youpi:
         youpi_api_base = (settings_obj.youpi_api_url or "http://localhost:6100").rstrip("/")
         # Detect if running in Docker container and resolve localhost to host / container network
-        internal_api_url = os.environ.get("YOUPI_INTERNAL_API_URL") or youpi_api_url if "youpi_api_url" in locals() else youpi_api_base
+        internal_api_url = os.environ.get("YOUPI_INTERNAL_API_URL") or youpi_api_base
         if "localhost" in internal_api_url and os.environ.get("ENVIRONMENT") != "development_host":
             # In container network, attempt youpi:6100 first, fallback to host.docker.internal:6100
             internal_api_url = internal_api_url.replace("localhost", "host.docker.internal")
@@ -615,7 +616,7 @@ async def create_payment_order(req: CreateOrderRequest, db: AsyncSession = Depen
     elif is_real_razorpay:
         payment_gateway = "Razorpay Live"
     else:
-        payment_gateway = "AutoExam Secure Gateway"
+        payment_gateway = "YouPI Sovereign Gateway"
 
     # Create pending transaction
     new_txn = TokenRechargeTransaction(
@@ -636,9 +637,7 @@ async def create_payment_order(req: CreateOrderRequest, db: AsyncSession = Depen
     db.add(new_txn)
     await db.commit()
 
-    merchant_upi = settings_obj.merchant_upi_id or "autoexam.billing@icici"
     merchant_name = settings_obj.merchant_name or "AutoExam Examination Cell"
-    upi_intent = f"upi://pay?pa={merchant_upi}&pn={merchant_name.replace(' ', '%20')}&am={total_payable:.2f}&cu=INR&tn={transaction_id}"
 
     return {
         "transaction_id": transaction_id,
@@ -648,7 +647,7 @@ async def create_payment_order(req: CreateOrderRequest, db: AsyncSession = Depen
         "is_youpi": is_youpi,
         "youpi_payment_id": youpi_payment_id,
         "youpi_checkout_url": youpi_checkout_url,
-        "merchant_upi_id": merchant_upi,
+        "merchant_upi_id": settings_obj.merchant_upi_id or "youpi.sovereign@autoexam",
         "merchant_name": merchant_name,
         "plan_id": req.plan_id,
         "plan_name": plan_name,
@@ -660,7 +659,7 @@ async def create_payment_order(req: CreateOrderRequest, db: AsyncSession = Depen
         "total_gst_inr": total_gst,
         "total_payable_inr": total_payable,
         "payment_method": "YOUPI" if is_youpi else req.payment_method,
-        "upi_intent_string": upi_intent
+        "upi_intent_string": youpi_checkout_url
     }
 
 
