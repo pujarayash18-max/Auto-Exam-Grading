@@ -52,3 +52,10 @@ backend/uploads/audio/*
 backend/uploads/materials/*
 !backend/uploads/materials/.gitkeep
 
+# YouPI Assets & Runtime Data
+youpi-pg/assets/*.mp4
+youpi-pg/data/*
+!youpi-pg/data/.gitkeep
+youpi-pg/apps/android-observer-app/youpi-sms-gateway.apk
+
+

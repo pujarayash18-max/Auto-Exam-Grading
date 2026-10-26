@@ -132,6 +132,11 @@ class UpdateAISettingsRequest(BaseModel):
     gateway_mode: Optional[str] = "HYBRID"
     low_token_threshold: Optional[int] = 50000
     is_prepaid_enforced: Optional[bool] = True
+    youpi_api_url: Optional[str] = None
+    youpi_checkout_url: Optional[str] = None
+    youpi_merchant_id: Optional[str] = None
+    youpi_webhook_secret: Optional[str] = None
+    youpi_api_key: Optional[str] = None
 
 class CreatePlanRequest(BaseModel):
     name: str
@@ -185,6 +190,11 @@ async def get_ai_settings(db: AsyncSession = Depends(get_db)):
         "merchant_name": settings_obj.merchant_name or "AutoExam Examination Cell",
         "gst_rate_percent": settings_obj.gst_rate_percent if settings_obj.gst_rate_percent is not None else 18.0,
         "gateway_mode": settings_obj.gateway_mode or "HYBRID",
+        "youpi_api_url": settings_obj.youpi_api_url or "http://localhost:6100",
+        "youpi_checkout_url": settings_obj.youpi_checkout_url or "http://localhost:7000",
+        "youpi_merchant_id": settings_obj.youpi_merchant_id or "00000000-0000-0000-0000-000000000001",
+        "youpi_webhook_secret": mask_key(settings_obj.youpi_webhook_secret),
+        "has_youpi_configured": bool(settings_obj.youpi_api_url),
         "token_balance": settings_obj.token_balance,
         "wallet_balance_inr": round(settings_obj.wallet_balance_inr, 2),
         "total_tokens_used": settings_obj.total_tokens_used,
@@ -233,6 +243,18 @@ async def update_ai_settings(req: UpdateAISettingsRequest, db: AsyncSession = De
         settings_obj.gst_rate_percent = max(0.0, req.gst_rate_percent)
     if req.gateway_mode is not None:
         settings_obj.gateway_mode = req.gateway_mode
+
+    # YouPI Sovereign Gateway fields
+    if req.youpi_api_url is not None:
+        settings_obj.youpi_api_url = req.youpi_api_url.strip()
+    if req.youpi_checkout_url is not None:
+        settings_obj.youpi_checkout_url = req.youpi_checkout_url.strip()
+    if req.youpi_merchant_id is not None:
+        settings_obj.youpi_merchant_id = req.youpi_merchant_id.strip()
+    if req.youpi_webhook_secret is not None and req.youpi_webhook_secret.strip():
+        settings_obj.youpi_webhook_secret = req.youpi_webhook_secret.strip()
+    if req.youpi_api_key is not None and req.youpi_api_key.strip():
+        settings_obj.youpi_api_key = req.youpi_api_key.strip()
         
     if req.low_token_threshold is not None:
         settings_obj.low_token_threshold = max(1000, req.low_token_threshold)
@@ -249,8 +271,12 @@ async def update_ai_settings(req: UpdateAISettingsRequest, db: AsyncSession = De
         "active_model": settings_obj.active_model,
         "merchant_upi_id": settings_obj.merchant_upi_id,
         "merchant_name": settings_obj.merchant_name,
+        "gateway_mode": settings_obj.gateway_mode,
+        "youpi_api_url": settings_obj.youpi_api_url,
+        "youpi_checkout_url": settings_obj.youpi_checkout_url,
         "model_details": MODEL_PRICING[settings_obj.active_model]
     }
+
 
 
 @router.post("/reset-balance", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN]))])
@@ -415,6 +441,53 @@ async def delete_plan(plan_id: str, db: AsyncSession = Depends(get_db)):
     return {"msg": f"Plan '{plan.name}' archived successfully"}
 
 
+async def _settle_recharge_transaction(
+    db: AsyncSession,
+    settings_obj: AISettings,
+    txn: TokenRechargeTransaction,
+    payment_id: Optional[str] = None,
+    gateway_signature: Optional[str] = None,
+    utr_reference: Optional[str] = None,
+    payment_method: Optional[str] = None,
+    reference_note: Optional[str] = None
+) -> str:
+    """
+    Authoritative settlement helper: marks transaction COMPLETED, issues sequential tax invoice,
+    and credits token balance to the organization wallet.
+    """
+    if txn.status == "COMPLETED":
+        return txn.invoice_number or ""
+
+    if not txn.invoice_number:
+        inv_count_res = await db.execute(select(func.count(TokenRechargeTransaction.id)))
+        inv_seq = (inv_count_res.scalar() or 0) + 1
+        current_year = datetime.now(timezone.utc).year
+        txn.invoice_number = f"INV-{current_year}-{inv_seq:05d}"
+
+    if payment_id:
+        txn.gateway_payment_id = payment_id
+    if gateway_signature:
+        txn.gateway_signature = gateway_signature
+    if utr_reference:
+        txn.utr_reference = utr_reference
+    if payment_method:
+        txn.payment_method = payment_method
+
+    txn.status = "COMPLETED"
+    txn.reference_note = reference_note or f"Verified on {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+
+    # Credit Token Wallet Dynamically
+    settings_obj.token_balance += txn.tokens_purchased
+    settings_obj.wallet_balance_inr += txn.amount_inr
+    settings_obj.updated_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(settings_obj)
+    await db.refresh(txn)
+
+    return txn.invoice_number
+
+
 @router.post("/recharge/create-order", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN]))])
 async def create_payment_order(req: CreateOrderRequest, db: AsyncSession = Depends(get_db)):
     """
@@ -457,8 +530,9 @@ async def create_payment_order(req: CreateOrderRequest, db: AsyncSession = Depen
 
     is_real_razorpay = False
 
-    # If Razorpay keys are configured and gateway mode is not locked to UPI_DIRECT
-    if razorpay_key_id and razorpay_key_secret and settings_obj.gateway_mode != "UPI_DIRECT":
+
+    # If Razorpay keys are configured and gateway mode is not locked to UPI_DIRECT or YOUPI
+    if razorpay_key_id and razorpay_key_secret and settings_obj.gateway_mode not in ["UPI_DIRECT", "YOUPI"]:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 rzp_res = await client.post(
@@ -482,17 +556,80 @@ async def create_payment_order(req: CreateOrderRequest, db: AsyncSession = Depen
         except Exception as rzp_err:
             print(f"Razorpay order creation fallback: {rzp_err}")
 
+    # Determine gateway mode & YouPI order session
+    is_youpi = (req.payment_method == "YOUPI" or settings_obj.gateway_mode == "YOUPI")
+    youpi_payment_id = None
+    youpi_checkout_url = None
+
+    if is_youpi:
+        youpi_api_base = (settings_obj.youpi_api_url or "http://localhost:6100").rstrip("/")
+        # Detect if running in Docker container and resolve localhost to host / container network
+        internal_api_url = os.environ.get("YOUPI_INTERNAL_API_URL") or youpi_api_url if "youpi_api_url" in locals() else youpi_api_base
+        if "localhost" in internal_api_url and os.environ.get("ENVIRONMENT") != "development_host":
+            # In container network, attempt youpi:6100 first, fallback to host.docker.internal:6100
+            internal_api_url = internal_api_url.replace("localhost", "host.docker.internal")
+
+        try:
+            headers = {"Content-Type": "application/json"}
+            if settings_obj.youpi_merchant_id:
+                headers["X-Merchant-Id"] = settings_obj.youpi_merchant_id
+            if settings_obj.youpi_api_key or settings_obj.youpi_webhook_secret:
+                headers["X-Merchant-Key"] = settings_obj.youpi_api_key or settings_obj.youpi_webhook_secret
+
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                res = await client.post(
+                    f"{internal_api_url}/api/v1/payments",
+                    headers=headers,
+                    json={
+                        "orderId": transaction_id,
+                        "amount": f"{total_payable:.2f}",
+                        "currency": "INR",
+                        "customer": {
+                            "name": "AutoExam SuperAdmin",
+                            "email": "admin@autoexam.com"
+                        },
+                        "description": f"AutoExam AI Token Recharge ({plan_name})",
+                        "returnUrl": f"http://localhost:3000/superadmin/ai-settings?txn={transaction_id}",
+                        "metadata": {
+                            "transaction_id": transaction_id,
+                            "plan_id": req.plan_id,
+                            "tokens": str(tokens)
+                        }
+                    }
+                )
+                if res.status_code in (200, 201):
+                    ydata = res.json()
+                    youpi_payment_id = ydata.get("paymentId")
+        except Exception as yerr:
+            print(f"YouPI API session creation note: {yerr}")
+
+        if not youpi_payment_id:
+            youpi_payment_id = f"youpi_{uuid.uuid4().hex[:12]}"
+
+        public_checkout_base = (settings_obj.youpi_checkout_url or "http://localhost:7000").rstrip("/")
+        youpi_checkout_url = f"{public_checkout_base}/checkout/{youpi_payment_id}"
+
+    # Determine payment gateway name
+    if is_youpi:
+        payment_gateway = "YouPI Sovereign Gateway"
+    elif is_real_razorpay:
+        payment_gateway = "Razorpay Live"
+    else:
+        payment_gateway = "AutoExam Secure Gateway"
+
     # Create pending transaction
     new_txn = TokenRechargeTransaction(
         transaction_id=transaction_id,
         gateway_order_id=gateway_order_id,
+        gateway_payment_id=youpi_payment_id if is_youpi else None,
+        youpi_payment_id=youpi_payment_id if is_youpi else None,
         plan_name=plan_name,
         tokens_purchased=tokens,
         base_amount_inr=base_amount,
         gst_amount_inr=total_gst,
         amount_inr=total_payable,
-        payment_method=req.payment_method,
-        payment_gateway="Razorpay Live" if is_real_razorpay else "AutoExam Secure Gateway",
+        payment_method="YOUPI" if is_youpi else req.payment_method,
+        payment_gateway=payment_gateway,
         status="PENDING",
         reference_note=f"Initiated on {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
     )
@@ -508,6 +645,9 @@ async def create_payment_order(req: CreateOrderRequest, db: AsyncSession = Depen
         "gateway_order_id": gateway_order_id,
         "is_real_razorpay": is_real_razorpay,
         "razorpay_key_id": razorpay_key_id if is_real_razorpay else None,
+        "is_youpi": is_youpi,
+        "youpi_payment_id": youpi_payment_id,
+        "youpi_checkout_url": youpi_checkout_url,
         "merchant_upi_id": merchant_upi,
         "merchant_name": merchant_name,
         "plan_id": req.plan_id,
@@ -519,7 +659,7 @@ async def create_payment_order(req: CreateOrderRequest, db: AsyncSession = Depen
         "sgst_inr": sgst_inr,
         "total_gst_inr": total_gst,
         "total_payable_inr": total_payable,
-        "payment_method": req.payment_method,
+        "payment_method": "YOUPI" if is_youpi else req.payment_method,
         "upi_intent_string": upi_intent
     }
 
@@ -527,7 +667,7 @@ async def create_payment_order(req: CreateOrderRequest, db: AsyncSession = Depen
 @router.get("/recharge/order-status/{transaction_id}", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN]))])
 async def get_order_status(transaction_id: str, db: AsyncSession = Depends(get_db)):
     """
-    Real-time polling endpoint. Allows client gateway to automatically detect payment completion.
+    Real-time polling endpoint. Automatically verifies payment status with YouPI or gateway.
     """
     settings_obj = await get_or_create_ai_settings(db)
     res = await db.execute(
@@ -537,6 +677,39 @@ async def get_order_status(transaction_id: str, db: AsyncSession = Depends(get_d
     if not txn:
         raise HTTPException(status_code=404, detail="Order not found")
 
+    # If pending and linked to YouPI, check live YouPI status
+    if txn.status == "PENDING" and txn.youpi_payment_id:
+        youpi_api_base = (settings_obj.youpi_api_url or "http://localhost:6100").rstrip("/")
+        internal_api_url = youpi_api_base
+        if "localhost" in internal_api_url and os.environ.get("ENVIRONMENT") != "development_host":
+            internal_api_url = internal_api_url.replace("localhost", "host.docker.internal")
+
+        try:
+            headers = {}
+            if settings_obj.youpi_api_key or settings_obj.youpi_webhook_secret:
+                headers["X-Merchant-Key"] = settings_obj.youpi_api_key or settings_obj.youpi_webhook_secret
+
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                yres = await client.get(f"{internal_api_url}/api/v1/payments/{txn.youpi_payment_id}", headers=headers)
+                if yres.status_code == 200:
+                    ydata = yres.json()
+                    ystatus = str(ydata.get("status", "")).upper()
+                    if ystatus == "SUCCESS":
+                        await _settle_recharge_transaction(
+                            db=db,
+                            settings_obj=settings_obj,
+                            txn=txn,
+                            payment_id=txn.youpi_payment_id,
+                            utr_reference=ydata.get("utr") or f"UTR{uuid.uuid4().int % 1000000000000:012d}",
+                            payment_method="YouPI UPI",
+                            reference_note="Verified automatically via YouPI Payment API"
+                        )
+                    elif ystatus in ["FAILED", "CANCELLED", "EXPIRED"]:
+                        txn.status = ystatus
+                        await db.commit()
+        except Exception as check_err:
+            print(f"YouPI status check note: {check_err}")
+
     return {
         "transaction_id": txn.transaction_id,
         "status": txn.status, # "PENDING", "COMPLETED", "FAILED"
@@ -544,7 +717,9 @@ async def get_order_status(transaction_id: str, db: AsyncSession = Depends(get_d
         "tokens_credited": txn.tokens_purchased if txn.status == "COMPLETED" else 0,
         "new_token_balance": settings_obj.token_balance,
         "new_wallet_balance_inr": round(settings_obj.wallet_balance_inr, 2),
-        "amount_inr": txn.amount_inr
+        "amount_inr": txn.amount_inr,
+        "payment_gateway": txn.payment_gateway,
+        "youpi_payment_id": txn.youpi_payment_id
     }
 
 
@@ -583,30 +758,19 @@ async def verify_payment_and_credit(req: VerifyPaymentRequest, db: AsyncSession 
             await db.commit()
             raise HTTPException(status_code=400, detail="Invalid payment signature. Verification rejected.")
 
-    # Generate sequential Tax Invoice Number
-    inv_count_res = await db.execute(select(func.count(TokenRechargeTransaction.id)))
-    inv_seq = (inv_count_res.scalar() or 0) + 1
-    current_year = datetime.now(timezone.utc).year
-    invoice_no = f"INV-{current_year}-{inv_seq:05d}"
-
-    # Update transaction
+    # Settle transaction
     payment_id = req.gateway_payment_id or f"pay_{uuid.uuid4().hex[:12].upper()}"
-    txn.gateway_payment_id = payment_id
-    txn.gateway_signature = req.gateway_signature or "SIG_VERIFIED"
-    txn.utr_reference = req.utr_reference or f"UTR{uuid.uuid4().int % 1000000000000:012d}"
-    txn.payment_method = req.payment_method
-    txn.invoice_number = invoice_no
-    txn.status = "COMPLETED"
-    txn.reference_note = f"Verified via {req.payment_method} on {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
-
-    # Credit Token Wallet Dynamically
-    settings_obj.token_balance += txn.tokens_purchased
-    settings_obj.wallet_balance_inr += txn.amount_inr
-    settings_obj.updated_at = datetime.now(timezone.utc)
-
-    await db.commit()
-    await db.refresh(settings_obj)
-    await db.refresh(txn)
+    utr_ref = req.utr_reference or f"UTR{uuid.uuid4().int % 1000000000000:012d}"
+    invoice_no = await _settle_recharge_transaction(
+        db=db,
+        settings_obj=settings_obj,
+        txn=txn,
+        payment_id=payment_id,
+        gateway_signature=req.gateway_signature or "SIG_VERIFIED",
+        utr_reference=utr_ref,
+        payment_method=req.payment_method,
+        reference_note=f"Verified via {req.payment_method} on {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+    )
 
     return {
         "msg": "Payment verified! Tokens have been credited to your prepaid balance.",
@@ -630,14 +794,134 @@ async def verify_payment_and_credit(req: VerifyPaymentRequest, db: AsyncSession 
     }
 
 
-@router.post("/recharge/webhook")
-async def payment_gateway_webhook(request: Request, x_razorpay_signature: Optional[str] = Header(None), db: AsyncSession = Depends(get_db)):
+@router.post("/recharge/webhook/youpi")
+async def youpi_webhook_listener(
+    request: Request,
+    x_gateway_signature: Optional[str] = Header(None),
+    x_gateway_signature_v2: Optional[str] = Header(None),
+    x_gateway_timestamp: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Asynchronous Webhook Listener for external payment gateway events.
-    Automatically marks orders as COMPLETED and credits tokens.
+    Authoritative Webhook Listener for YouPI PG Sovereign Gateway.
+    Verifies HMAC-SHA256 signature, validates payment outcome, and credits token wallet.
+    """
+    settings_obj = await get_or_create_ai_settings(db)
+    raw_body = await request.body()
+    webhook_secret = settings_obj.youpi_webhook_secret or "sec_youpi_autoexam_webhook_key"
+
+    # Signature verification
+    clean_sig = None
+    if x_gateway_signature_v2:
+        for part in x_gateway_signature_v2.split(","):
+            if part.startswith("v1="):
+                clean_sig = part.split("v1=")[1].strip()
+            elif part.startswith("t=") and not x_gateway_timestamp:
+                x_gateway_timestamp = part.split("t=")[1].strip()
+    elif x_gateway_signature:
+        clean_sig = x_gateway_signature.replace("sha256=", "").strip()
+
+    if clean_sig:
+        if x_gateway_signature_v2 and x_gateway_timestamp:
+            msg_to_hash = f"{x_gateway_timestamp}.{raw_body.decode('utf-8', errors='ignore')}".encode("utf-8")
+        else:
+            msg_to_hash = raw_body
+
+        expected = hmac.new(webhook_secret.encode("utf-8"), msg_to_hash, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, clean_sig):
+            raise HTTPException(status_code=400, detail="Invalid YouPI webhook signature")
+
+    try:
+        data = await request.json()
+        event_name = data.get("event", "").upper()
+        order_id = data.get("orderId")
+        payment_id = data.get("paymentId")
+        utr = data.get("utr") or f"UTR{uuid.uuid4().int % 1000000000000:012d}"
+
+        if event_name == "SUCCESS" and (order_id or payment_id):
+            query = select(TokenRechargeTransaction)
+            if order_id:
+                query = query.where(TokenRechargeTransaction.transaction_id == order_id)
+            else:
+                query = query.where(TokenRechargeTransaction.youpi_payment_id == payment_id)
+
+            res = await db.execute(query)
+            txn = res.scalars().first()
+            if txn and txn.status != "COMPLETED":
+                inv_no = await _settle_recharge_transaction(
+                    db=db,
+                    settings_obj=settings_obj,
+                    txn=txn,
+                    payment_id=payment_id or txn.gateway_payment_id,
+                    utr_reference=utr,
+                    payment_method="YouPI UPI",
+                    reference_note="Settled via YouPI Gateway Webhook"
+                )
+                return {"status": "success", "invoice_number": inv_no, "tokens_credited": txn.tokens_purchased}
+    except Exception as err:
+        print(f"YouPI webhook parse note: {err}")
+
+    return {"status": "ok"}
+
+
+@router.get("/recharge/test-youpi-connection", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN]))])
+async def test_youpi_connection(db: AsyncSession = Depends(get_db)):
+    """
+    Super Admin utility to test network connectivity to the YouPI Sovereign Gateway.
+    """
+    settings_obj = await get_or_create_ai_settings(db)
+    youpi_api_base = (settings_obj.youpi_api_url or "http://localhost:6100").rstrip("/")
+    internal_api_url = youpi_api_base
+    if "localhost" in internal_api_url and os.environ.get("ENVIRONMENT") != "development_host":
+        internal_api_url = internal_api_url.replace("localhost", "host.docker.internal")
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.get(f"{internal_api_url}/health")
+            if res.status_code == 200:
+                return {
+                    "connected": True,
+                    "status_code": 200,
+                    "api_url": youpi_api_base,
+                    "checkout_url": settings_obj.youpi_checkout_url,
+                    "gateway_response": res.json()
+                }
+            return {
+                "connected": False,
+                "status_code": res.status_code,
+                "api_url": youpi_api_base,
+                "message": f"YouPI service returned HTTP {res.status_code}"
+            }
+    except Exception as exc:
+        return {
+            "connected": False,
+            "api_url": youpi_api_base,
+            "message": str(exc),
+            "hint": "Ensure YouPI gateway service is running on port 6100"
+        }
+
+
+@router.post("/recharge/webhook")
+async def payment_gateway_webhook(
+    request: Request,
+    x_razorpay_signature: Optional[str] = Header(None),
+    x_gateway_signature: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Universal Webhook Listener: supports Razorpay and YouPI webhook dispatches.
     """
     settings_obj = await get_or_create_ai_settings(db)
     payload_body = await request.body()
+
+    # Route to YouPI webhook handler if X-Gateway-Signature is present
+    if x_gateway_signature:
+        return await youpi_webhook_listener(
+            request=request,
+            x_gateway_signature=x_gateway_signature,
+            db=db
+        )
+
     razorpay_key_secret = settings_obj.razorpay_key_secret or os.environ.get("RAZORPAY_KEY_SECRET")
 
     # If Razorpay signature header is present, verify
@@ -659,17 +943,14 @@ async def payment_gateway_webhook(request: Request, x_razorpay_signature: Option
                 res = await db.execute(select(TokenRechargeTransaction).where(TokenRechargeTransaction.gateway_order_id == order_id))
                 txn = res.scalars().first()
                 if txn and txn.status != "COMPLETED":
-                    inv_count_res = await db.execute(select(func.count(TokenRechargeTransaction.id)))
-                    inv_seq = (inv_count_res.scalar() or 0) + 1
-                    current_year = datetime.now(timezone.utc).year
-                    
-                    txn.status = "COMPLETED"
-                    txn.gateway_payment_id = payment_id
-                    txn.invoice_number = f"INV-{current_year}-{inv_seq:05d}"
-                    txn.reference_note = "Webhook auto-capture"
-                    settings_obj.token_balance += txn.tokens_purchased
-                    settings_obj.wallet_balance_inr += txn.amount_inr
-                    await db.commit()
+                    await _settle_recharge_transaction(
+                        db=db,
+                        settings_obj=settings_obj,
+                        txn=txn,
+                        payment_id=payment_id,
+                        payment_method="Razorpay",
+                        reference_note="Webhook auto-capture"
+                    )
                     return {"status": "success", "msg": f"Order {order_id} credited via webhook"}
     except Exception as e:
         print(f"Webhook processing note: {e}")

@@ -48,10 +48,16 @@ async def main():
             # Add columns to ai_settings if missing
             await conn.execute(text("ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS razorpay_key_id VARCHAR;"))
             await conn.execute(text("ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS razorpay_key_secret VARCHAR;"))
+            await conn.execute(text("ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS youpi_api_url VARCHAR DEFAULT 'http://localhost:6100';"))
+            await conn.execute(text("ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS youpi_checkout_url VARCHAR DEFAULT 'http://localhost:7000';"))
+            await conn.execute(text("ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS youpi_merchant_id VARCHAR DEFAULT '00000000-0000-0000-0000-000000000001';"))
+            await conn.execute(text("ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS youpi_webhook_secret VARCHAR DEFAULT 'sec_youpi_autoexam_webhook_key';"))
+            await conn.execute(text("ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS youpi_api_key VARCHAR;"))
 
             # Add columns to token_recharge_transactions if missing
             await conn.execute(text("ALTER TABLE token_recharge_transactions ADD COLUMN IF NOT EXISTS gateway_order_id VARCHAR;"))
             await conn.execute(text("ALTER TABLE token_recharge_transactions ADD COLUMN IF NOT EXISTS gateway_payment_id VARCHAR;"))
+            await conn.execute(text("ALTER TABLE token_recharge_transactions ADD COLUMN IF NOT EXISTS youpi_payment_id VARCHAR;"))
             await conn.execute(text("ALTER TABLE token_recharge_transactions ADD COLUMN IF NOT EXISTS gateway_signature VARCHAR;"))
             await conn.execute(text("ALTER TABLE token_recharge_transactions ADD COLUMN IF NOT EXISTS invoice_number VARCHAR;"))
             await conn.execute(text("ALTER TABLE token_recharge_transactions ADD COLUMN IF NOT EXISTS base_amount_inr FLOAT DEFAULT 0.0;"))

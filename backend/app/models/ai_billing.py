@@ -23,7 +23,14 @@ class AISettings(Base):
     merchant_upi_id = Column(String, default="autoexam.billing@icici", nullable=True)
     merchant_name = Column(String, default="AutoExam Examination Cell", nullable=True)
     gst_rate_percent = Column(Float, default=18.0, nullable=False)
-    gateway_mode = Column(String, default="HYBRID", nullable=False) # "RAZORPAY", "UPI_DIRECT", "HYBRID"
+    gateway_mode = Column(String, default="HYBRID", nullable=False) # "RAZORPAY", "UPI_DIRECT", "YOUPI", "HYBRID"
+
+    # YouPI-PG Sovereign Gateway Configuration
+    youpi_api_url = Column(String, default="http://localhost:6100", nullable=True)
+    youpi_checkout_url = Column(String, default="http://localhost:7000", nullable=True)
+    youpi_merchant_id = Column(String, default="00000000-0000-0000-0000-000000000001", nullable=True)
+    youpi_webhook_secret = Column(String, default="sec_youpi_autoexam_webhook_key", nullable=True)
+    youpi_api_key = Column(String, nullable=True)
 
     # Prepaid Token & Financial Tracker (Default to 0 - No Mock Balance)
     token_balance = Column(BigInteger, default=0, nullable=False)
@@ -83,6 +90,7 @@ class TokenRechargeTransaction(Base):
     transaction_id = Column(String, unique=True, index=True, nullable=False)
     gateway_order_id = Column(String, nullable=True)
     gateway_payment_id = Column(String, nullable=True)
+    youpi_payment_id = Column(String, nullable=True)
     gateway_signature = Column(String, nullable=True)
     invoice_number = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

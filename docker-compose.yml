@@ -49,6 +49,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SECRET_KEY=dev_secret_key_change_in_prod
       - ENVIRONMENT=development
+      - YOUPI_INTERNAL_API_URL=http://youpi:6100
     depends_on:
       db:
         condition: service_healthy
@@ -56,6 +57,24 @@ services:
         condition: service_healthy
     restart: unless-stopped
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  youpi:
+    image: node:22-alpine
+    container_name: viva_youpi
+    working_dir: /app
+    volumes:
+      - ./youpi-pg:/app
+    ports:
+      - "6100:6100"
+      - "7000:7000"
+      - "8090:8090"
+    environment:
+      - YOUPI_ALLOW_LOCALHOST_MODE=true
+      - YOUPI_MODE=localhost
+      - YOUPI_BIND_HOST=0.0.0.0
+      - CHECKOUT_FRAME_ANCESTORS=http://localhost:3000 http://localhost:8000 http://localhost
+    restart: unless-stopped
+    command: node run-gateway.js
 
   frontend:
     build:
@@ -86,6 +105,7 @@ services:
     depends_on:
       - frontend
       - backend
+      - youpi
     restart: unless-stopped
 
 volumes:

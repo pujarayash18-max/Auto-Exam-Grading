@@ -130,7 +130,7 @@ export default function AISettingsPage() {
   // Payment Gateway Modal State
   const [showPaymentModal, setShowPaymentModal] = useState<boolean>(false);
   const [checkoutData, setCheckoutData] = useState<any>(null);
-  const [paymentMethodTab, setPaymentMethodTab] = useState<"UPI" | "CARD" | "NETBANKING">("UPI");
+  const [paymentMethodTab, setPaymentMethodTab] = useState<"YOUPI" | "UPI" | "CARD" | "NETBANKING">("YOUPI");
   const [processingPayment, setProcessingPayment] = useState<boolean>(false);
   const [paymentSuccessData, setPaymentSuccessData] = useState<any>(null);
   const [copiedUpi, setCopiedUpi] = useState<boolean>(false);
@@ -145,6 +145,16 @@ export default function AISettingsPage() {
   const [gatewayStep, setGatewayStep] = useState<"SELECT" | "OTP" | "SUCCESS">("SELECT");
   const [otpInput, setOtpInput] = useState<string>("");
   const [timerSeconds, setTimerSeconds] = useState<number>(599); // 09:59 timer
+
+  // YouPI Sovereign Gateway State
+  const [youpiApiUrl, setYoupiApiUrl] = useState<string>("http://localhost:6100");
+  const [youpiCheckoutUrl, setYoupiCheckoutUrl] = useState<string>("http://localhost:7000");
+  const [youpiMerchantId, setYoupiMerchantId] = useState<string>("00000000-0000-0000-0000-000000000001");
+  const [youpiWebhookSecret, setYoupiWebhookSecret] = useState<string>("");
+  const [youpiApiKey, setYoupiApiKey] = useState<string>("");
+  const [testingYoupi, setTestingYoupi] = useState<boolean>(false);
+  const [youpiTestResult, setYoupiTestResult] = useState<any>(null);
+  const [copiedYoupiWebhook, setCopiedYoupiWebhook] = useState<boolean>(false);
 
   // Reset Balance Modal State
   const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
@@ -181,6 +191,10 @@ export default function AISettingsPage() {
   const fallbackMerchantNameId = useId();
   const fallbackGstRateId = useId();
   const fallbackGatewayModeId = useId();
+  const fallbackYoupiApiId = useId();
+  const fallbackYoupiCheckoutId = useId();
+  const fallbackYoupiMerchantId = useId();
+  const fallbackYoupiSecretId = useId();
 
   const getAuthToken = () => {
     return localStorage.getItem("access_token");
@@ -223,6 +237,10 @@ export default function AISettingsPage() {
         setMerchantName(s.merchant_name || "AutoExam Examination Cell");
         setGstRatePercent(s.gst_rate_percent !== undefined ? s.gst_rate_percent : 18.0);
         setGatewayMode(s.gateway_mode || "HYBRID");
+        if (s.youpi_api_url) setYoupiApiUrl(s.youpi_api_url);
+        if (s.youpi_checkout_url) setYoupiCheckoutUrl(s.youpi_checkout_url);
+        if (s.youpi_merchant_id) setYoupiMerchantId(s.youpi_merchant_id);
+        if (s.youpi_api_key) setYoupiApiKey(s.youpi_api_key);
       }
 
       // 2. Fetch Usage Logs
@@ -350,6 +368,11 @@ export default function AISettingsPage() {
       if (ollamaHost.trim()) payload.ollama_host = ollamaHost.trim();
       if (razorpayKeyId.trim()) payload.razorpay_key_id = razorpayKeyId.trim();
       if (razorpayKeySecret.trim()) payload.razorpay_key_secret = razorpayKeySecret.trim();
+      if (youpiApiUrl.trim()) payload.youpi_api_url = youpiApiUrl.trim();
+      if (youpiCheckoutUrl.trim()) payload.youpi_checkout_url = youpiCheckoutUrl.trim();
+      if (youpiMerchantId.trim()) payload.youpi_merchant_id = youpiMerchantId.trim();
+      if (youpiWebhookSecret.trim()) payload.youpi_webhook_secret = youpiWebhookSecret.trim();
+      if (youpiApiKey.trim()) payload.youpi_api_key = youpiApiKey.trim();
 
       const res = await fetch("http://localhost:8000/api/v1/admin/ai/settings", {
         method: "PUT",
@@ -370,11 +393,90 @@ export default function AISettingsPage() {
       setOpenaiKey("");
       setClaudeKey("");
       setRazorpayKeySecret("");
+      setYoupiWebhookSecret("");
       await loadAllData();
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to save configuration.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTestYoupiConnection = async () => {
+    setTestingYoupi(true);
+    setYoupiTestResult(null);
+    const token = getAuthToken();
+    try {
+      const res = await fetch("http://localhost:8000/api/v1/admin/ai/recharge/test-youpi-connection", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      setYoupiTestResult(data);
+    } catch (err: any) {
+      setYoupiTestResult({ connected: false, error: err.message || "Failed to connect to YouPI Gateway" });
+    } finally {
+      setTestingYoupi(false);
+    }
+  };
+
+  const handleSimulateYoupiSettlement = async () => {
+    if (!checkoutData?.transaction_id) return;
+    setProcessingPayment(true);
+    try {
+      const token = getAuthToken();
+      const res = await fetch("http://localhost:8000/api/v1/admin/ai/recharge/webhook/youpi", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          event: "SUCCESS",
+          paymentId: checkoutData.youpi_payment_id || `youpi_${Date.now()}`,
+          orderId: checkoutData.transaction_id,
+          amount: checkoutData.total_payable_inr.toString(),
+          utr: `UTR${Date.now().toString().slice(-12)}`,
+          status: "SUCCESS",
+        }),
+      });
+
+      if (res.ok) {
+        const statusRes = await fetch(
+          `http://localhost:8000/api/v1/admin/ai/recharge/order-status/${checkoutData.transaction_id}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (statusRes.ok) {
+          const sData = await statusRes.json();
+          if (sData.status === "COMPLETED") {
+            const invRes = await fetch(
+              `http://localhost:8000/api/v1/admin/ai/recharge/invoice/${checkoutData.transaction_id}`,
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+            if (invRes.ok) {
+              const invData = await invRes.json();
+              setPaymentSuccessData({
+                invoice_number: invData.invoice_number,
+                payment_id: invData.gateway_payment_id || checkoutData.youpi_payment_id,
+                tokens_credited: invData.tokens_credited,
+                tax_breakdown: {
+                  base_amount: invData.base_amount_inr,
+                  cgst: invData.cgst_inr,
+                  sgst: invData.sgst_inr,
+                  cgst_9: invData.cgst_inr,
+                  sgst_9: invData.sgst_inr,
+                  total_gst: invData.total_gst_inr,
+                  total_paid: invData.total_amount_inr,
+                },
+              });
+              setGatewayStep("SUCCESS");
+              await loadAllData();
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error("Simulation error:", err);
+    } finally {
+      setProcessingPayment(false);
     }
   };
 
@@ -1155,13 +1257,138 @@ export default function AISettingsPage() {
                         onChange={(e) => setGatewayMode(e.target.value)}
                         className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
                       >
-                        <option value="HYBRID">Hybrid (Direct UPI/Cards + Razorpay SDK)</option>
-                        <option value="DIRECT_ONLY">Direct Zero-Fee Gateway (UPI QR & Cards Only)</option>
+                        <option value="YOUPI">YouPI Sovereign Gateway (Direct Zero-Fee UPI)</option>
+                        <option value="HYBRID">Hybrid (YouPI Direct UPI + Razorpay SDK)</option>
+                        <option value="DIRECT_ONLY">Direct Zero-Fee Gateway (UPI QR & Cards)</option>
                         <option value="RAZORPAY_ONLY">Razorpay Checkout SDK Only</option>
                       </select>
                       <span className="text-[11px] text-muted-foreground block">
                         Select how students and department admins execute recharge checkouts.
                       </span>
+                    </div>
+                  </div>
+
+                  {/* YouPI Sovereign Gateway Configuration */}
+                  <div className="pt-4 border-t border-border/50 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Zap className="w-4 h-4 text-emerald-500" />
+                        <span className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                          YouPI Sovereign Gateway Settings
+                        </span>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-mono font-medium border border-emerald-500/20">
+                          Direct UPI 0% Fees
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleTestYoupiConnection}
+                        disabled={testingYoupi}
+                        className="px-2.5 py-1 rounded-lg border border-border bg-card hover:bg-muted text-xs font-medium text-foreground flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        {testingYoupi ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />}
+                        {testingYoupi ? "Testing..." : "Test Gateway Connection"}
+                      </button>
+                    </div>
+
+                    {youpiTestResult && (
+                      <div className={`p-3 rounded-lg border text-xs flex items-center justify-between ${
+                        youpiTestResult.connected
+                          ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                          : "bg-destructive/10 border-destructive/30 text-destructive"
+                      }`}>
+                        <span className="flex items-center gap-1.5">
+                          {youpiTestResult.connected ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+                          {youpiTestResult.connected
+                            ? `YouPI Gateway Online (API: ${youpiTestResult.api_url} - Status 200 OK)`
+                            : `Connection Error: ${youpiTestResult.error || "Gateway unreachable"}`}
+                        </span>
+                        {youpiTestResult.gateway_response?.service && (
+                          <span className="font-mono text-[10px] opacity-80">
+                            Service: {youpiTestResult.gateway_response.service}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label htmlFor={fallbackYoupiApiId} className="text-xs text-muted-foreground block">
+                          YouPI API Base URL:
+                        </label>
+                        <input
+                          id={fallbackYoupiApiId}
+                          type="text"
+                          placeholder="http://localhost:6100"
+                          value={youpiApiUrl}
+                          onChange={(e) => setYoupiApiUrl(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label htmlFor={fallbackYoupiCheckoutId} className="text-xs text-muted-foreground block">
+                          YouPI Checkout Portal URL:
+                        </label>
+                        <input
+                          id={fallbackYoupiCheckoutId}
+                          type="text"
+                          placeholder="http://localhost:7000"
+                          value={youpiCheckoutUrl}
+                          onChange={(e) => setYoupiCheckoutUrl(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label htmlFor={fallbackYoupiMerchantId} className="text-xs text-muted-foreground block">
+                          YouPI Merchant ID:
+                        </label>
+                        <input
+                          id={fallbackYoupiMerchantId}
+                          type="text"
+                          placeholder="00000000-0000-0000-0000-000000000001"
+                          value={youpiMerchantId}
+                          onChange={(e) => setYoupiMerchantId(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label htmlFor={fallbackYoupiSecretId} className="text-xs text-muted-foreground block">
+                          YouPI Webhook Secret / API Key:
+                        </label>
+                        <input
+                          id={fallbackYoupiSecretId}
+                          type="password"
+                          placeholder="Leave blank to use default gateway key"
+                          value={youpiWebhookSecret}
+                          onChange={(e) => setYoupiWebhookSecret(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        />
+                      </div>
+                    </div>
+
+                    {/* YouPI Dedicated Webhook Listener URL */}
+                    <div className="p-3 rounded-lg border border-border bg-muted/30 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                      <div>
+                        <span className="font-semibold text-foreground block">YouPI Signed Webhook Listener:</span>
+                        <code className="text-[11px] text-muted-foreground font-mono">
+                          http://localhost:8000/api/v1/admin/ai/recharge/webhook/youpi
+                        </code>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText("http://localhost:8000/api/v1/admin/ai/recharge/webhook/youpi");
+                          setCopiedYoupiWebhook(true);
+                          setTimeout(() => setCopiedYoupiWebhook(false), 2000);
+                        }}
+                        className="px-3 py-1.5 rounded-lg border border-border bg-card text-foreground hover:bg-muted font-medium flex items-center gap-1.5 shrink-0"
+                      >
+                        {copiedYoupiWebhook ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copiedYoupiWebhook ? "Copied Endpoint" : "Copy YouPI Webhook"}
+                      </button>
                     </div>
                   </div>
 
@@ -1612,9 +1839,9 @@ export default function AISettingsPage() {
       {/* 5. Production Payment Gateway Modal */}
       {showPaymentModal && checkoutData && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border max-w-xl w-full rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-card border border-border max-w-2xl max-h-[92vh] overflow-y-auto w-full rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             {/* Gateway Header */}
-            <div className="p-5 border-b border-border bg-muted/40 flex items-center justify-between">
+            <div className="p-5 border-b border-border bg-muted/40 flex items-center justify-between sticky top-0 z-10 backdrop-blur-md">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-bold text-sm shadow-sm">
                   AE
@@ -1672,7 +1899,19 @@ export default function AISettingsPage() {
                 {/* Payment Method Selector Tabs */}
                 {gatewayStep === "SELECT" && (
                   <>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPaymentMethodTab("YOUPI")}
+                        className={`p-3 rounded-xl border text-xs font-bold flex flex-col items-center gap-1.5 transition-colors cursor-pointer ${
+                          paymentMethodTab === "YOUPI"
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border text-muted-foreground hover:text-foreground hover:bg-muted/30"
+                        }`}
+                      >
+                        <Zap className="w-4 h-4 text-emerald-500" />
+                        YouPI Direct
+                      </button>
                       <button
                         type="button"
                         onClick={() => setPaymentMethodTab("UPI")}
@@ -1683,7 +1922,7 @@ export default function AISettingsPage() {
                         }`}
                       >
                         <QrCode className="w-4 h-4" />
-                        UPI / QR Code
+                        UPI QR / App
                       </button>
                       <button
                         type="button"
@@ -1695,7 +1934,7 @@ export default function AISettingsPage() {
                         }`}
                       >
                         <CreditCard className="w-4 h-4" />
-                        Cards (Visa/MC)
+                        Debit / Credit
                       </button>
                       <button
                         type="button"
@@ -1710,6 +1949,68 @@ export default function AISettingsPage() {
                         Net Banking
                       </button>
                     </div>
+
+                    {/* Method 0: YouPI Sovereign Gateway */}
+                    {paymentMethodTab === "YOUPI" && (
+                      <div className="rounded-xl border border-border/80 bg-card/60 overflow-hidden space-y-3">
+                        <div className="p-3 bg-muted/40 border-b border-border flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2">
+                            <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                            <span className="font-semibold text-foreground">YouPI Sovereign Payment Portal</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-mono font-medium">
+                              Direct UPI 0% Fees
+                            </span>
+                          </div>
+                          {checkoutData.youpi_checkout_url && (
+                            <a
+                              href={checkoutData.youpi_checkout_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline flex items-center gap-1 text-[11px] font-semibold"
+                            >
+                              Open Portal
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          )}
+                        </div>
+
+                        {checkoutData.youpi_checkout_url ? (
+                          <div className="p-2 bg-muted/20">
+                            <iframe
+                              src={checkoutData.youpi_checkout_url}
+                              title="YouPI Checkout Portal"
+                              className="w-full h-[400px] rounded-lg border border-border bg-white"
+                              sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                            />
+                          </div>
+                        ) : (
+                          <div className="p-8 text-center text-xs text-muted-foreground">
+                            Initializing YouPI session...
+                          </div>
+                        )}
+
+                        <div className="p-3 bg-muted/30 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-2 text-xs">
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            <span className="relative flex h-2 w-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                            </span>
+                            <span className="text-[11px]">Real-time observer active: awaiting bank webhook...</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={handleSimulateYoupiSettlement}
+                              disabled={processingPayment}
+                              className="px-2.5 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-[11px] font-semibold text-foreground flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              {processingPayment ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3 text-amber-500" />}
+                              Simulate Instant Verification
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Method 1: UPI */}
                     {paymentMethodTab === "UPI" && (
