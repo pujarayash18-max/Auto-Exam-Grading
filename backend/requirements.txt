@@ -16,3 +16,4 @@ PyJWT
 pydantic-settings
 pandas
 openpyxl
+ollama

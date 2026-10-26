@@ -11,8 +11,13 @@ class Exam(Base):
     subject_name = Column(String, nullable=False)
     
     # Configuration
+    total_marks = Column(Float, nullable=False, default=100.0)
     timer_per_question_minutes = Column(Float, nullable=False, default=1.0)
     questions_per_student = Column(Integer, nullable=False, default=5)
+    blooms_taxonomy = Column(Boolean, nullable=False, default=False)
+    scheduled_date = Column(DateTime(timezone=True), nullable=True)
+    location = Column(String, nullable=True)
+    exam_type = Column(String, nullable=True, default="ppt_only")
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
@@ -41,6 +46,7 @@ class ExamMaterial(Base):
     filename = Column(String, nullable=False)
     file_path = Column(String, nullable=False)
     material_type = Column(String, nullable=False) # "ppt", "pdf_questions", "pdf_answers"
+    weightage = Column(Float, nullable=False, default=100.0)
     uploaded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     exam = relationship("Exam", back_populates="materials")

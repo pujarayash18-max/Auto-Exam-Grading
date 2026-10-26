@@ -1,14 +1,19 @@
+import jwt
+import secrets
+from datetime import datetime, timezone, timedelta
+from typing import Optional
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, text
+from sqlalchemy import select, text, or_, func
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
-from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel
 
 from app.api.deps import get_db, get_current_user
-from app.models.user import User, LoginAlias, RefreshToken, PasswordResetRequest
+from app.core.config import settings
+from app.models.user import User, LoginAlias, RefreshToken, PasswordResetRequest, ResetStatusEnum
 from app.core.security import create_access_token, create_refresh_token, check_lockout, record_failed_login, clear_lockout
 
 router = APIRouter()
@@ -74,8 +79,8 @@ async def login(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=True,
-        samesite="strict",
+        secure=False,
+        samesite="lax",
         max_age=7*24*60*60
     )
     
@@ -167,17 +172,93 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
     
     return {"access_token": access_token, "token_type": "bearer"}
 
+
+
 class ForgotPasswordRequest(BaseModel):
-    login_id: str
+    email: Optional[str] = None
+    login_id: Optional[str] = None
 
 @router.post("/forgot-password")
 async def forgot_password(req: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(LoginAlias).where(LoginAlias.alias == req.login_id))
-    alias = result.scalars().first()
-    if alias:
-        prq = PasswordResetRequest(user_id=alias.user_id)
+    identifier = (req.email or req.login_id or "").strip()
+    if not identifier:
+        raise HTTPException(status_code=400, detail="Please enter an email address or Login ID.")
+
+    # Search user by email (case-insensitive) or by login alias (case-insensitive)
+    query = (
+        select(User)
+        .outerjoin(LoginAlias, User.id == LoginAlias.user_id)
+        .where(
+            or_(
+                func.lower(User.email) == identifier.lower(),
+                func.lower(LoginAlias.alias) == identifier.lower(),
+            )
+        )
+    )
+    res = await db.execute(query)
+    user = res.scalars().first()
+
+    if user and user.email:
+        # Generate a temporary 8-character password
+        temp_pw = secrets.token_urlsafe(6)[:8]
+        user.temp_encrypted_password = temp_pw
+        user.password_hash = ph.hash(temp_pw)
+        user.must_change_password = True
+        user.password_email_sent = True
+
+        # Record password reset request in DB
+        prq = PasswordResetRequest(user_id=user.id, status=ResetStatusEnum.PENDING)
         db.add(prq)
         await db.commit()
-    
-    return {"msg": "If the account exists, a reset request has been queued."}
+
+        # Retrieve user's primary login alias
+        alias_res = await db.execute(select(LoginAlias.alias).where(LoginAlias.user_id == user.id))
+        primary_alias = alias_res.scalars().first() or user.email
+
+        # Send reset email via Brevo
+        if settings.BREVO_API_KEY:
+            payload = {
+                "sender": {
+                    "name": settings.BREVO_SENDER_NAME,
+                    "email": settings.BREVO_SENDER_EMAIL,
+                },
+                "to": [{"email": user.email, "name": user.email}],
+                "subject": "AutoExam Password Reset",
+                "htmlContent": (
+                    f"<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;'>"
+                    f"<h2 style='color: #2563EB; margin-top: 0;'>AutoExam Password Reset</h2>"
+                    f"<p>Hello,</p>"
+                    f"<p>A password reset was requested for your AutoExam account.</p>"
+                    f"<p>Use the temporary credentials below to log in:</p>"
+                    f"<div style='background-color: #f1f5f9; padding: 15px; border-radius: 6px; margin: 15px 0;'>"
+                    f"<p style='margin: 4px 0;'><b>Login ID:</b> <code>{primary_alias}</code></p>"
+                    f"<p style='margin: 4px 0;'><b>Temporary Password:</b> <code style='font-size: 16px; font-weight: bold; color: #1e293b;'>{temp_pw}</code></p>"
+                    f"</div>"
+                    f"<p>Please sign in at <a href='http://localhost:3000/auth/login'>AutoExam Login</a> and change your password immediately.</p>"
+                    f"<p style='color: #64748b; font-size: 12px; margin-top: 20px;'>If you did not request this, please contact your administrator.</p>"
+                    f"</div>"
+                ),
+            }
+            headers = {
+                "accept": "application/json",
+                "api-key": settings.BREVO_API_KEY,
+                "content-type": "application/json",
+            }
+            try:
+                async with httpx.AsyncClient() as client:
+                    brevo_res = await client.post("https://api.brevo.com/v3/smtp/email", json=payload, headers=headers)
+                    if not brevo_res.is_success:
+                        print(f"Failed to send reset email via Brevo: {brevo_res.text}")
+                    else:
+                        print(f"Successfully sent password reset email to {user.email}")
+            except Exception as e:
+                print(f"Exception sending reset email: {e}")
+        else:
+            print(f"[AUTH DEV] Password reset for {user.email}: Temp Password = {temp_pw}")
+
+    return {
+        "msg": "If an account exists with this email or Login ID, password reset instructions have been sent to the registered email.",
+        "success": True,
+    }
+
 

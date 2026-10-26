@@ -6,13 +6,17 @@ from .base import Base
 
 class ExamTypeEnum(str, enum.Enum):
     PPT_ONLY = "ppt_only"
-    PPT_AND_QUESTIONS = "ppt_and_questions"
+    PDF_ONLY = "pdf_only"
+    BOTH = "both"
     QA_PDF = "qa_pdf"
+    NORMAL_PROMPT = "normal_prompt"
 
 class StudentVivaStatus(str, enum.Enum):
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
+    PAUSED = "paused"
     COMPLETED = "completed"
+    ABSENT = "absent"
 
 class ExamRun(Base):
     __tablename__ = "exam_runs"
@@ -41,6 +45,9 @@ class StudentVivaRun(Base):
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     is_published = Column(Boolean, default=False)
+    publish_grades = Column(Boolean, default=True)
+    is_absent = Column(Boolean, default=False)
+    assigned_question_ids = Column(Text, nullable=True) # Comma-separated question IDs randomly selected for this student
     
     exam_run = relationship("ExamRun", back_populates="student_runs")
     student = relationship("StudentProfile")
@@ -56,6 +63,8 @@ class StudentVivaAnswer(Base):
     transcript = Column(Text, nullable=True)
     audio_file_path = Column(String, nullable=True)
     score_awarded = Column(Float, nullable=True)
+    feedback = Column(Text, nullable=True)
+    areas_to_improve = Column(Text, nullable=True)
     
     viva_run = relationship("StudentVivaRun", back_populates="answers")
     question = relationship("ExamQuestion")

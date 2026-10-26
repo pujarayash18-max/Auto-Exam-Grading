@@ -15,10 +15,12 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     role = Column(Enum(RoleEnum), nullable=False)
+    email = Column(String, unique=True, index=True, nullable=True)
     password_hash = Column(String, nullable=True)
     temp_encrypted_password = Column(String, nullable=True)
     temp_password_expires_at = Column(DateTime(timezone=True), nullable=True)
     must_change_password = Column(Boolean, default=False, nullable=False)
+    password_email_sent = Column(Boolean, server_default='false', default=False, nullable=False)
     active = Column(Boolean, default=True, nullable=False)
 
     aliases = relationship("LoginAlias", back_populates="user", cascade="all, delete-orphan")

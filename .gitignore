@@ -42,3 +42,13 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+
+# Databases & Runtime Uploads
+*.db
+*.sqlite
+*.sqlite3
+backend/uploads/audio/*
+!backend/uploads/audio/.gitkeep
+backend/uploads/materials/*
+!backend/uploads/materials/.gitkeep
+

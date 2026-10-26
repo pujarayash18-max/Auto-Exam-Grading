@@ -1,12 +1,25 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.v1 import auth, admin, faculty, viva, results, student
+from app.api.v1 import auth, admin, faculty, viva, results, student, ai_billing
+from app.api.deps import engine
+from app.models.base import Base
 
-app = FastAPI(title="AutoExamGrading API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Gracefully create any new database tables (e.g. ai_billing) if DB is reachable
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    except Exception as e:
+        print(f"Database table verification deferred: {e}")
+    yield
+
+app = FastAPI(title="AutoExamGrading API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:[0-9]+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -14,6 +27,7 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
+app.include_router(ai_billing.router, prefix="/api/v1/admin/ai", tags=["ai-billing"])
 app.include_router(faculty.router, prefix="/api/v1/faculty", tags=["faculty"])
 app.include_router(viva.router, prefix="/api/v1/viva", tags=["viva"])
 app.include_router(results.router, prefix="/api/v1/results", tags=["results"])

@@ -5,6 +5,7 @@ from .base import Base
 class Department(Base):
     __tablename__ = "departments"
     id = Column(Integer, primary_key=True, index=True)
+    department_id = Column(String, unique=True, nullable=True)
     name = Column(String, unique=True, nullable=False)
 
     classes = relationship("Class", back_populates="department")
@@ -21,7 +22,7 @@ class Class(Base):
 
     department = relationship("Department", back_populates="classes")
     students = relationship("StudentProfile", back_populates="student_class")
-    faculty_assignments = relationship("FacultyClass", back_populates="assigned_class")
+    faculty_assignments = relationship("FacultyAssignment", back_populates="assigned_class")
 
     __table_args__ = (
         UniqueConstraint('department_id', 'semester', 'name', name='uq_class_dept_sem_name'),
@@ -38,13 +39,14 @@ class FacultyProfile(Base):
     user = relationship("User")
     department = relationship("Department", back_populates="faculties")
     subjects = relationship("FacultySubject", back_populates="faculty", cascade="all, delete-orphan")
-    class_assignments = relationship("FacultyClass", back_populates="faculty", cascade="all, delete-orphan")
+    class_assignments = relationship("FacultyAssignment", back_populates="faculty", cascade="all, delete-orphan")
 
 
 class FacultySubject(Base):
     __tablename__ = "faculty_subjects"
     id = Column(Integer, primary_key=True, index=True)
     faculty_id = Column(Integer, ForeignKey("faculty_profiles.id", ondelete="CASCADE"), nullable=False)
+    subject_code = Column(String, nullable=True)
     subject_name = Column(String, nullable=False)
 
     faculty = relationship("FacultyProfile", back_populates="subjects")
@@ -54,17 +56,19 @@ class FacultySubject(Base):
     )
 
 
-class FacultyClass(Base):
-    __tablename__ = "faculty_classes"
+class FacultyAssignment(Base):
+    __tablename__ = "faculty_assignments"
     id = Column(Integer, primary_key=True, index=True)
     faculty_id = Column(Integer, ForeignKey("faculty_profiles.id", ondelete="CASCADE"), nullable=False)
     class_id = Column(Integer, ForeignKey("classes.id", ondelete="CASCADE"), nullable=False)
+    subject_code = Column(String, nullable=True)
+    subject_name = Column(String, nullable=False)
 
     faculty = relationship("FacultyProfile", back_populates="class_assignments")
     assigned_class = relationship("Class", back_populates="faculty_assignments")
 
     __table_args__ = (
-        UniqueConstraint('faculty_id', 'class_id', name='uq_faculty_class'),
+        UniqueConstraint('faculty_id', 'class_id', 'subject_name', name='uq_faculty_assignment_subject'),
     )
 
 
@@ -88,6 +92,7 @@ class StudentSubject(Base):
     __tablename__ = "student_subjects"
     id = Column(Integer, primary_key=True, index=True)
     student_id = Column(Integer, ForeignKey("student_profiles.id", ondelete="CASCADE"), nullable=False)
+    subject_code = Column(String, nullable=True)
     subject_name = Column(String, nullable=False)
 
     student = relationship("StudentProfile", back_populates="subjects")
