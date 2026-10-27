@@ -15,6 +15,12 @@ async def lifespan(app: FastAPI):
         print(f"Database table verification deferred: {e}")
     yield
 
+from fastapi.responses import JSONResponse
+from fastapi import Request
+import logging
+
+logger = logging.getLogger("uvicorn.error")
+
 app = FastAPI(title="AutoExamGrading API", lifespan=lifespan)
 
 app.add_middleware(
@@ -24,6 +30,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception(f"Unhandled exception on {request.method} {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal Server Error: {str(exc)}"}
+    )
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])

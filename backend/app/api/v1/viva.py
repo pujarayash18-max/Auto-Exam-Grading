@@ -23,7 +23,7 @@ router = APIRouter()
 
 class StartExamRunRequest(BaseModel):
     exam_id: int
-    exam_type: Optional[ExamTypeEnum] = None
+    exam_type: Optional[str] = None
     total_questions_to_generate: Optional[int] = None  # Pool size; defaults to exam.questions_per_student if not given
 
 AUDIO_UPLOAD_DIR = "uploads/audio"
@@ -47,13 +47,11 @@ async def start_exam_run(
     if not exam or (prof and current_user.role == RoleEnum.FACULTY and exam.faculty_id != prof.id):
         raise HTTPException(status_code=403, detail="Exam not found or unauthorized")
         
-    effective_exam_type = req.exam_type
-    if not effective_exam_type:
-        raw_type = getattr(exam, "exam_type", None) or "ppt_only"
-        try:
-            effective_exam_type = ExamTypeEnum(raw_type)
-        except Exception:
-            effective_exam_type = ExamTypeEnum.PPT_ONLY
+    raw_type = req.exam_type or getattr(exam, "exam_type", None) or "ppt_only"
+    if hasattr(raw_type, "value"):
+        effective_exam_type = str(raw_type.value).lower()
+    else:
+        effective_exam_type = str(raw_type).lower()
 
     # Check if an active run already exists for this exam, resume it if found
     existing_run_res = await db.execute(
@@ -98,20 +96,20 @@ async def start_exam_run(
         
         context_text = f"Subject: {exam.subject_name}. Generate foundational and practical oral viva examination questions for {exam.subject_name}."
         
-        if effective_exam_type in [ExamTypeEnum.PPT_ONLY, ExamTypeEnum.PDF_ONLY, ExamTypeEnum.BOTH, ExamTypeEnum.QA_PDF]:
+        if effective_exam_type in ["ppt_only", "pdf_only", "both", "qa_pdf", "ppt_and_questions"]:
             mat_res = await db.execute(select(ExamMaterial).where(ExamMaterial.exam_id == exam.id))
             materials = mat_res.scalars().all()
             extracted_contents = []
             for m in materials:
-                if effective_exam_type == ExamTypeEnum.PPT_ONLY and m.material_type.lower() not in ["ppt", "pptx"]:
+                if effective_exam_type in ["ppt_only"] and m.material_type.lower() not in ["ppt", "pptx"]:
                     continue
-                if effective_exam_type == ExamTypeEnum.PDF_ONLY and m.material_type.lower() != "pdf":
+                if effective_exam_type in ["pdf_only"] and m.material_type.lower() != "pdf":
                     continue
                 extracted_contents.append(extract_text(m.file_path, m.material_type))
             
             if extracted_contents:
                 combined_text = "\n".join(extracted_contents)
-                if effective_exam_type == ExamTypeEnum.QA_PDF:
+                if effective_exam_type == "qa_pdf":
                     context_text = f"The following text contains a set of exact questions and answers. Extract exactly {num_q} of them as-is:\n" + combined_text
                 else:
                     context_text = f"Based on the following material for {exam.subject_name}, generate {num_q} viva questions:\n" + combined_text

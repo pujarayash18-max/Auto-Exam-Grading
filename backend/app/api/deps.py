@@ -32,7 +32,12 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     except jwt.InvalidTokenError:
         raise credentials_exception
         
-    user = await db.get(User, int(user_id))
+    try:
+        user = await db.get(User, int(user_id))
+    except (ValueError, TypeError):
+        user_res = await db.execute(select(User).where(User.email == user_id))
+        user = user_res.scalars().first()
+
     if user is None or not user.active:
         raise credentials_exception
     return user

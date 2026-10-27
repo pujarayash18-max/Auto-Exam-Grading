@@ -22,7 +22,7 @@ class ExamRun(Base):
     __tablename__ = "exam_runs"
     id = Column(Integer, primary_key=True, index=True)
     exam_id = Column(Integer, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False)
-    exam_type = Column(Enum(ExamTypeEnum), nullable=False)
+    exam_type = Column(String, nullable=False, default="ppt_only")
     started_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     is_finished = Column(Boolean, default=False)
     
