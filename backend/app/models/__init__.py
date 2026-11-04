@@ -8,6 +8,6 @@ from app.models.profile import (
 )
 from app.models.exam import Exam, GradingScheme, ExamMaterial, ExamQuestion
 from app.models.viva import ExamRun, StudentVivaRun, StudentVivaAnswer, ExamTypeEnum, StudentVivaStatus
-from app.models.ai_billing import AISettings, PrepaidPlan, AITokenUsageLog, TokenRechargeTransaction
+from app.models.ai_billing import AISettings, PrepaidPlan, AITokenUsageLog, TokenRechargeTransaction, ExamTokenReservation
 
 # This file imports all models to make sure Alembic detects them

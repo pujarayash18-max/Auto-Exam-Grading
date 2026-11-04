@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runMigrations } from './packages/db/src/migrate.js';
+import { MerchantRepository } from './packages/db/src/repositories/merchant.repository.js';
+import { ReceivingAccountRepository } from './packages/db/src/repositories/receiving-account.repository.js';
 import { startServer as startPaymentApi } from './apps/payment-api/src/index.js';
 import { startCheckoutServer } from './apps/checkout-portal/src/index.js';
 
@@ -29,7 +31,33 @@ console.log('====================================================');
 // 1. Ensure migrations and default merchant are active
 console.log('[1/3] Verifying database schema & default merchant...');
 const migrationResult = runMigrations();
-console.log(`[✓] Merchant: ${migrationResult.defaultMerchant?.name || 'YOUPI Demo Store'} (${migrationResult.defaultMerchant?.id})`);
+const { db, defaultMerchant } = migrationResult;
+
+if (defaultMerchant) {
+  try {
+    const merchantRepo = new MerchantRepository(db);
+    merchantRepo.update(defaultMerchant.id, {
+      businessName: 'AutoExam Examination Cell',
+      branding: {
+        appName: 'AutoExam Payment Gateway',
+        primaryColor: '#0f172a',
+        logoUrl: null
+      }
+    });
+    const accountRepo = new ReceivingAccountRepository(db);
+    const accounts = accountRepo.findByMerchantId(defaultMerchant.id);
+    if (accounts && accounts.length > 0) {
+      accountRepo.updateAccount(accounts[0].id, {
+        payeeName: 'AutoExam Examination Cell',
+        upiId: 'autoexam.billing@icici',
+        isActive: true
+      });
+    }
+    console.log('[✓] Merchant synchronized: AutoExam Examination Cell (autoexam.billing@icici)');
+  } catch (syncErr) {
+    console.warn('[Warning] Merchant branding sync:', syncErr.message);
+  }
+}
 
 // 2. Launch Payment API (port 6100)
 console.log('[2/3] Launching Core Payment API on port 6100...');

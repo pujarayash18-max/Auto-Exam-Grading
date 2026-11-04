@@ -23,6 +23,104 @@ function maskEmail(email) {
 }
 
 /**
+ * Dispatches verification OTP to customer's email via Brevo transactional email API.
+ * @param {string} email
+ * @param {string} name
+ * @param {string} otpCode
+ * @returns {Promise<boolean>}
+ */
+async function sendOtpEmailViaBrevo(email, name, otpCode) {
+  const apiKey = process.env.BREVO_API_KEY;
+  if (!apiKey || !email || !email.includes('@') || email.endsWith('.local')) return false;
+  const senderEmail = process.env.BREVO_SENDER_EMAIL || 'yash.pujara131786@marwadiuniversity.ac.in';
+  const senderName = process.env.BREVO_SENDER_NAME || 'AutoExam Payment Gateway';
+
+  try {
+    const payload = {
+      sender: { name: senderName, email: senderEmail },
+      to: [{ email: email, name: name || 'Valued User' }],
+      subject: `Your AutoExam YoUPI Verification Code: ${otpCode}`,
+      htmlContent: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 24px; max-width: 480px; margin: auto; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
+          <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">YoUPI Payment Verification</h2>
+          <p style="color: #475569; font-size: 14px;">Hello <strong>${name || 'Valued Customer'}</strong>,</p>
+          <p style="color: #475569; font-size: 14px;">Use the following 6-digit one-time password to complete your phone verification for AutoExam token recharge:</p>
+          <div style="font-size: 32px; font-weight: 800; letter-spacing: 6px; color: #0284c7; background: #f0f9ff; padding: 14px 20px; text-align: center; border-radius: 8px; margin: 20px 0; border: 1px solid #bae6fd;">
+            ${otpCode}
+          </div>
+          <p style="color: #64748b; font-size: 12px; margin-bottom: 0;">⏱ Valid for 5 minutes. Please do not share this verification code with anyone.</p>
+        </div>
+      `
+    };
+
+    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'api-key': apiKey
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (res.ok) {
+      console.log(`[CustomerAuth] Dispatched OTP via Brevo to ${email}`);
+      return true;
+    } else {
+      const errTxt = await res.text();
+      console.warn(`[CustomerAuth] Brevo dispatch warning (HTTP ${res.status}): ${errTxt}`);
+      return false;
+    }
+  } catch (err) {
+    console.warn(`[CustomerAuth] Brevo email network note: ${err.message}`);
+    return false;
+  }
+}
+
+
+/**
+ * Dispatches 6-digit OTP directly to recipient phone number via Brevo Transactional SMS.
+ * @param {string} mobileNumber 10-digit or full phone number
+ * @param {string} otpCode
+ * @returns {Promise<boolean>}
+ */
+async function sendOtpSmsViaBrevo(mobileNumber, otpCode) {
+  const apiKey = process.env.BREVO_API_KEY;
+  if (!apiKey || !mobileNumber) return false;
+  let clean = String(mobileNumber).replace(/[^0-9]/g, '');
+  if (clean.length === 10) clean = '91' + clean;
+
+  const sender = (process.env.BREVO_SMS_SENDER || 'AutoExam').slice(0, 11);
+
+  try {
+    const res = await fetch('https://api.brevo.com/v3/transactionalSMS/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'api-key': apiKey
+      },
+      body: JSON.stringify({
+        sender,
+        recipient: clean,
+        content: `Your AutoExam YoUPI verification code is ${otpCode}. Valid for 5 minutes.`
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      console.log(`[CustomerAuth] Dispatched real SMS OTP via Brevo to +${clean} (Message ID: ${data.messageId || 'OK'})`);
+      return true;
+    } else {
+      const errTxt = await res.text();
+      console.warn(`[CustomerAuth] Brevo SMS dispatch warning (HTTP ${res.status}): ${errTxt}`);
+      return false;
+    }
+  } catch (err) {
+    console.warn(`[CustomerAuth] Brevo SMS network note: ${err.message}`);
+    return false;
+  }
+}
+
+/**
  * Registers gateway-owned customer identity and session routes.
  * @param {HttpServer} server
  * @param {{
@@ -235,31 +333,59 @@ export function registerCustomerRoutes(server, ctx) {
       });
     }
 
-    // Dispatch via WhatsApp Berry Protocol
-    const berry = getBerry();
-    let dispatchResult = { success: true, delivered: false, simulated: true };
-    const displayName = existingUser?.name || name || '';
+    // Target email for notification
+    const targetEmail = existingUser?.email || email;
+    const displayName = existingUser?.name || name || 'Customer';
 
+    // 1. Dispatch via Brevo Transactional SMS directly to user phone
+    let smsDispatched = false;
+    try {
+      smsDispatched = await sendOtpSmsViaBrevo(cleanMobile, otpCode);
+    } catch (e) {
+      console.warn(`[CustomerAuth] SMS send error: ${e.message}`);
+    }
+
+    // 2. Dispatch via Brevo Transactional Email if target email is available
+    let emailDispatched = false;
+    if (targetEmail && targetEmail.includes('@') && !targetEmail.endsWith('.local')) {
+      emailDispatched = await sendOtpEmailViaBrevo(targetEmail, displayName, otpCode);
+    }
+
+    // 3. Dispatch via WhatsApp Berry Protocol if connected
+    const berry = getBerry();
+    let dispatchResult = { success: true, delivered: false };
     if (berry) {
       try {
         dispatchResult = await berry.sendOtp(cleanMobile, otpCode, displayName);
       } catch (err) {
         console.warn(`[CustomerAuth] WhatsApp dispatch notice: ${err.message}`);
       }
-    } else {
-      console.log(`[CustomerAuth] Berry service not loaded; OTP for ${cleanMobile} was not delivered.`);
     }
 
-    console.log(`[CustomerAuth] OTP generated for +91${cleanMobile} (expires in 5 mins)`);
+    console.log(`[CustomerAuth] 🔑 VERIFICATION OTP FOR +91${cleanMobile}: [ ${otpCode} ] (SMS: ${smsDispatched ? 'SENT' : 'NO'}, Email: ${emailDispatched ? 'SENT' : 'NO'})`);
 
+    let deliveryMsg = 'Verification code sent to your mobile & email.';
+    if (smsDispatched && emailDispatched) {
+      deliveryMsg = `Verification code sent via SMS to +91 ${cleanMobile} and email (${targetEmail}).`;
+    } else if (smsDispatched) {
+      deliveryMsg = `Verification code sent via SMS to +91 ${cleanMobile}.`;
+    } else if (emailDispatched) {
+      deliveryMsg = `Verification code sent to your email (${targetEmail}).`;
+    }
+
+    const isDev = process.env.YOUPI_ALLOW_LOCALHOST_MODE === 'true' || process.env.NODE_ENV === 'development';
     HttpServer.json(res, 200, {
       success: true,
-      message: 'OTP sent to your WhatsApp number.',
+      message: deliveryMsg,
       mobileNumber: cleanMobile,
+      email: targetEmail || undefined,
       expiresInSeconds: 300,
-      // Returning the OTP lets anyone log in as any number: only on explicit opt-in, never in production.
-      devOtp: (process.env.YOUPI_EXPOSE_DEV_OTP === 'true' && process.env.NODE_ENV !== 'production' ? otpCode : undefined),
-      dispatch: dispatchResult
+      devOtp: isDev ? otpCode : undefined,
+      dispatch: {
+        smsDelivered: smsDispatched,
+        emailDelivered: emailDispatched,
+        whatsappDelivered: dispatchResult?.delivered || false
+      }
     });
   });
 

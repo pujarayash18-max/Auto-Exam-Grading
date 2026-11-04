@@ -81,7 +81,7 @@
 
               <div id="authOtpGreeting"
                 style="font-size:12.5px; color:var(--ypg-text-dark); font-weight:600; margin-bottom:8px;">
-                Enter the 6-digit code sent to your phone:
+                Enter the 6-digit verification code sent to your phone &amp; email:
               </div>
 
               <div class="ypg-input-group">
@@ -102,7 +102,14 @@
                   <button type="button" class="ypg-btn-link" id="btnResendOtp" onclick="handleResendOtp()"
                     style="margin-left:4px;">Resend OTP</button>
                 </div>
-                <span id="otpCountdownTimer" style="font-weight:600; color:#64748b;"></span>
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <button type="button" class="ypg-btn-link" style="color:#64748b;" onclick="toggleOtpHelpTip()">Help?</button>
+                  <span id="otpCountdownTimer" style="font-weight:600; color:#64748b;"></span>
+                </div>
+              </div>
+
+              <div id="otpHelpTipBox" hidden style="margin-top:10px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:8px 10px; font-size:11.5px; color:#475569; line-height:1.4;">
+                <div>Tip: If not in your primary inbox, please check your <strong>Spam / Junk</strong> folder. In development, the code is also logged in Docker logs.</div>
               </div>
             </div>
 

@@ -13,6 +13,7 @@ import {
   Settings,
   Cpu,
   CreditCard,
+  Sliders,
   LogOut,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -38,6 +39,11 @@ export default function SuperAdminSidebar() {
       name: "AI Models & Billing",
       path: "/superadmin/ai-settings",
       icon: Cpu,
+    },
+    {
+      name: "Faculty Token Quotas",
+      path: "/superadmin/faculty-quotas",
+      icon: Sliders,
     },
     {
       name: "Manage Faculty",

@@ -73,6 +73,9 @@ services:
       - YOUPI_MODE=localhost
       - YOUPI_BIND_HOST=0.0.0.0
       - CHECKOUT_FRAME_ANCESTORS=http://localhost:3000 http://localhost:8000 http://localhost
+      - BREVO_API_KEY=${BREVO_API_KEY:-}
+      - BREVO_SENDER_EMAIL=yash.pujara131786@marwadiuniversity.ac.in
+      - BREVO_SENDER_NAME=AutoExam
     restart: unless-stopped
     command: node run-gateway.js
 

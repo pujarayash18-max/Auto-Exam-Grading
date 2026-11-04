@@ -42,6 +42,11 @@ export default function LiveVivaDashboard() {
   // Re-viva processing state
   const [revivaLoading, setRevivaLoading] = useState<number | null>(null);
 
+  // Token Reservation & Zero-Waste Lifecycle
+  const [tokenEstimate, setTokenEstimate] = useState<any | null>(null);
+  const [loadingEstimate, setLoadingEstimate] = useState(false);
+  const [finishingExam, setFinishingExam] = useState(false);
+
   // Speech Recognition & Audio Capture refs
   const recognitionRef = useRef<any>(null);
   const isRecordingRef = useRef(false);
@@ -68,6 +73,33 @@ export default function LiveVivaDashboard() {
 
   useEffect(() => {
     fetchExams();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedExamId) {
+      setTokenEstimate(null);
+      return;
+    }
+    const fetchEstimate = async () => {
+      setLoadingEstimate(true);
+      try {
+        const token = localStorage.getItem('access_token');
+        const res = await fetch(`http://localhost:8000/api/v1/faculty/exams/${selectedExamId}/token-estimate`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+          setTokenEstimate(await res.json());
+        }
+      } catch (err) {
+        console.error("Token estimate fetch failed", err);
+      } finally {
+        setLoadingEstimate(false);
+      }
+    };
+    fetchEstimate();
+  }, [selectedExamId]);
+
+  useEffect(() => {
 
     if (typeof window !== 'undefined') {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -493,6 +525,33 @@ export default function LiveVivaDashboard() {
     }
   };
 
+  const handleFinishExamRun = async () => {
+    if (!activeRunId) return;
+    if (!confirm("Are you sure you want to conclude this exam session? Any unspent reserved tokens will be immediately reclaimed and returned to the central institution pool.")) return;
+    setFinishingExam(true);
+    try {
+      const token = localStorage.getItem('access_token');
+      const res = await fetch(`http://localhost:8000/api/v1/viva/runs/${activeRunId}/finish`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to conclude exam session");
+      }
+      const data = await res.json();
+      alert(`Exam Session Concluded!\n\nTokens Consumed: ${data.tokens_consumed.toLocaleString()}\nTokens Reclaimed to Pool: ${data.tokens_reclaimed.toLocaleString()}\n\nZero-Waste Guarantee: Unspent tokens from absent students or skipped questions have been refunded.`);
+      setActiveRunId(null);
+      setRoster([]);
+      setSelectedExamId('');
+      setTokenEstimate(null);
+    } catch (err: any) {
+      alert("Error concluding exam: " + err.message);
+    } finally {
+      setFinishingExam(false);
+    }
+  };
+
   const currentQ = questions[currentQuestionIndex];
   const totalQuestions = questions.length;
 
@@ -753,6 +812,28 @@ export default function LiveVivaDashboard() {
                       </div>
                     </div>
                   )}
+
+                  {tokenEstimate && (
+                    <div className="p-3.5 rounded-xl border border-primary/20 bg-primary/5 space-y-2 text-xs">
+                      <div className="flex items-center justify-between font-semibold text-foreground">
+                        <span>Estimated Token Budget</span>
+                        <span className="font-mono text-primary font-bold">
+                          ~{tokenEstimate.total_estimated.toLocaleString()} tokens
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-muted-foreground text-[11px]">
+                        <span>Phase 1 (Question Bank Prep)</span>
+                        <span className="font-mono">{tokenEstimate.prep_tokens.toLocaleString()} tokens</span>
+                      </div>
+                      <div className="flex items-center justify-between text-muted-foreground text-[11px]">
+                        <span>Phase 2 ({tokenEstimate.num_students} Students Viva)</span>
+                        <span className="font-mono">{tokenEstimate.viva_tokens.toLocaleString()} tokens</span>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground pt-1 border-t border-border/50">
+                        Zero-Waste Guarantee: Soft reservation only. Unspent tokens from absent students are returned immediately.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <button 
@@ -786,6 +867,15 @@ export default function LiveVivaDashboard() {
                 <div className="text-xs bg-primary/10 text-primary py-1 px-3 rounded-md font-semibold border border-primary/20">
                   {roster.filter((r: any) => r.status === 'completed').length} / {roster.length} Completed
                 </div>
+                <button 
+                  onClick={handleFinishExamRun}
+                  disabled={finishingExam}
+                  className="px-3 h-8 bg-destructive/10 hover:bg-destructive/20 text-destructive text-xs font-semibold rounded-lg transition-colors border border-destructive/20 flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                  title="Conclude exam and release all unspent tokens back to institution wallet"
+                >
+                  {finishingExam ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
+                  Conclude &amp; Reclaim
+                </button>
               </div>
             </div>
             

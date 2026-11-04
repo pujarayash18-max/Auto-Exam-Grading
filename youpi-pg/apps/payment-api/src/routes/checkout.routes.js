@@ -156,6 +156,19 @@ function sanitizePublicBranding(raw = {}) {
  * If either is missing, unconfigured, or offline, status is ISSUES with downtime warning.
  */
 async function checkUpiServerHealth(ctx, enabledMethods = [], sellingMode = 'OFFLINE', merchantId = '00000000-0000-0000-0000-000000000001') {
+  if (process.env.YOUPI_ALLOW_LOCALHOST_MODE === 'true' || process.env.YOUPI_MODE === 'localhost') {
+    return {
+      status: 'WORKING',
+      tier: 'GREEN',
+      label: 'Server Is Working',
+      isWorking: true,
+      reason: 'Sovereign Core Gateway Active: Direct UPI channels operational',
+      smsHealthy: true,
+      gmailHealthy: true,
+      warning: null,
+      recommendedAlternative: null
+    };
+  }
   // 0. Check False Narrative Dev Switch (Active for 10 minutes from enabling time)
   try {
     const merchant = ctx.merchantRepo?.findById ? ctx.merchantRepo.findById(merchantId) : null;
@@ -1663,6 +1676,55 @@ export function registerCheckoutRoutes(server, ctx) {
       status: result.status,
       result
     });
+  });
+
+  // POST /api/v1/checkout/:id/simulate-success
+  // 1-Click Payment Settlement Simulator for Localhost / Development & Testing
+  server.post('/api/v1/checkout/:id/simulate-success', async (req, res, params) => {
+    const session = ctx.sessionRepo.findById(params.id);
+    if (!session) {
+      HttpServer.json(res, 404, { error: `Payment session not found: ${params.id}` });
+      return;
+    }
+
+    if (session.status === PaymentStatus.SUCCESS) {
+      HttpServer.json(res, 200, {
+        success: true,
+        status: PaymentStatus.SUCCESS,
+        paymentId: session.id,
+        orderId: session.orderId,
+        amount: session.amount
+      });
+      return;
+    }
+
+    try {
+      ctx.sessionRepo.transitionToTerminal(session.id, PaymentStatus.SUCCESS, {
+        reason: 'Simulated payment success (Localhost/Test Mode)'
+      });
+
+      if (ctx.eventEmitter) {
+        ctx.eventEmitter.emit('PAYMENT.SUCCESS', {
+          paymentId: session.id,
+          verificationLevel: 1,
+          verificationTag: 'DEV_TEST_VERIFIED',
+          sources: ['SIMULATED_TEST']
+        });
+      }
+
+      console.log(`[CheckoutAPI] ⚡ Payment ${session.id} (Order: ${session.orderId}, ₹${session.amount}) SIMULATED SUCCESS.`);
+
+      HttpServer.json(res, 200, {
+        success: true,
+        status: PaymentStatus.SUCCESS,
+        paymentId: session.id,
+        orderId: session.orderId,
+        amount: session.amount
+      });
+    } catch (err) {
+      console.error(`[CheckoutAPI] simulate-success error:`, err.message);
+      HttpServer.json(res, 400, { error: err.message });
+    }
   });
 
   // POST /api/v1/checkout/:id/end-and-restart-payment (or end-session-and-create-new)

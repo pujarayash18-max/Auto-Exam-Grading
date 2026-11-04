@@ -14,12 +14,32 @@ from app.models.user import User, RoleEnum
 from app.models.profile import FacultyProfile, StudentProfile, Class
 from app.models.exam import Exam, GradingScheme, ExamQuestion
 from app.models.viva import ExamTypeEnum, StudentVivaStatus, ExamRun, StudentVivaRun, StudentVivaAnswer
-from app.ai.llm import evaluate_answer, generate_questions_from_text, generate_single_question, generate_viva_improvement_report
+from app.models.ai_billing import AISettings, ExamTokenReservation
+from app.ai.llm import (
+    evaluate_answer, 
+    generate_questions_from_text, 
+    generate_single_question, 
+    generate_viva_improvement_report,
+    estimate_exam_tokens,
+    create_token_reservation,
+    reclaim_token_reservation
+)
 from app.ai.grader import calculate_final_grade
 from app.ai.document_parser import extract_text
 from app.models.exam import ExamMaterial
 
 router = APIRouter()
+
+async def get_active_reservation_id(db: AsyncSession, exam_id: int) -> Optional[int]:
+    """Retrieves active ExamTokenReservation ID for an exam if present."""
+    resv_res = await db.execute(
+        select(ExamTokenReservation).where(
+            ExamTokenReservation.exam_id == exam_id,
+            ExamTokenReservation.status == "ACTIVE"
+        ).order_by(ExamTokenReservation.id.desc())
+    )
+    resv = resv_res.scalars().first()
+    return resv.id if resv else None
 
 class StartExamRunRequest(BaseModel):
     exam_id: int
@@ -71,6 +91,37 @@ async def start_exam_run(
     # Initialize / update roster: ensure all students in the assigned class are in StudentVivaRun
     students_res = await db.execute(select(StudentProfile).where(StudentProfile.class_id == exam.class_id))
     students = students_res.scalars().all()
+    num_students = len(students)
+    num_q_per_student = exam.questions_per_student or 5
+    pool_size = req.total_questions_to_generate or num_q_per_student
+
+    # Verify or initiate zero-waste JIT token reservation
+    resv_id = await get_active_reservation_id(db, exam.id)
+    if not resv_id:
+        est = estimate_exam_tokens(
+            num_students=num_students,
+            num_questions_per_student=num_q_per_student,
+            generate_questions_count=pool_size
+        )
+        needed_tokens = est["total_estimated"]
+
+        # Check central wallet prepaid balance
+        st_res = await db.execute(select(AISettings).order_by(AISettings.id.desc()))
+        ai_settings = st_res.scalars().first()
+        if ai_settings and ai_settings.is_prepaid_enforced and ai_settings.active_provider != "ollama":
+            if ai_settings.token_balance < needed_tokens:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Insufficient token balance to start viva. Estimated tokens needed: {needed_tokens:,}, Available: {ai_settings.token_balance:,}. Please recharge tokens."
+                )
+
+        resv_id = await create_token_reservation(
+            exam_id=exam.id,
+            faculty_id=exam.faculty_id,
+            estimated_tokens=needed_tokens,
+            reservation_type="VIVA_EVALUATION",
+            notes=f"Exam: {exam.subject_name}, {num_students} students, {num_q_per_student} Qs/student"
+        )
     
     existing_sr_res = await db.execute(select(StudentVivaRun).where(StudentVivaRun.exam_run_id == run.id))
     existing_student_ids = {sr.student_id for sr in existing_sr_res.scalars().all()}
@@ -83,16 +134,13 @@ async def start_exam_run(
                 status=StudentVivaStatus.PENDING
             ))
 
-    # Ensure questions exist for the exam using Ollama if none were generated yet
+    # Ensure questions exist for the exam using Ollama/AI if none were generated yet
     q_res = await db.execute(select(ExamQuestion).where(ExamQuestion.exam_id == exam.id))
     existing_questions = q_res.scalars().all()
     
     if not existing_questions:
-        # Pool size = total_questions_to_generate (e.g. 20); per-student subset = exam.questions_per_student
-        pool_size = req.total_questions_to_generate or (exam.questions_per_student or 5)
-        per_student = exam.questions_per_student or 5
         # Always generate at least as many as per_student
-        num_q = max(pool_size, per_student)
+        num_q = max(pool_size, num_q_per_student)
         
         context_text = f"Subject: {exam.subject_name}. Generate foundational and practical oral viva examination questions for {exam.subject_name}."
         
@@ -114,11 +162,23 @@ async def start_exam_run(
                 else:
                     context_text = f"Based on the following material for {exam.subject_name}, generate {num_q} viva questions:\n" + combined_text
 
-        generated = await generate_questions_from_text(context_text, num_q, blooms_taxonomy=bool(exam.blooms_taxonomy))
+        generated = await generate_questions_from_text(
+            context_text, 
+            num_q, 
+            blooms_taxonomy=bool(exam.blooms_taxonomy),
+            faculty_id=exam.faculty_id,
+            exam_id=exam.id
+        )
         
         if not generated:
             for _ in range(num_q):
-                single_q = await generate_single_question(exam.subject_name, blooms_taxonomy=bool(exam.blooms_taxonomy))
+                single_q = await generate_single_question(
+                    exam.subject_name, 
+                    blooms_taxonomy=bool(exam.blooms_taxonomy),
+                    faculty_id=exam.faculty_id,
+                    exam_id=exam.id,
+                    reservation_id=resv_id
+                )
                 generated.append(single_q)
                 
         for gq in generated:
@@ -134,6 +194,7 @@ async def start_exam_run(
     return {
         "msg": "Exam run active",
         "run_id": run.id,
+        "reservation_id": resv_id,
         "questions_per_student": exam_data.questions_per_student if exam_data else 5,
         "timer_per_question_minutes": exam_data.timer_per_question_minutes if exam_data else 1.0
     }
@@ -296,7 +357,14 @@ async def generate_viva_question(
     existing_q_res = await db.execute(select(ExamQuestion).where(ExamQuestion.exam_id == exam.id))
     prev_questions = [q.question_text for q in existing_q_res.scalars().all()]
     
-    new_q_data = await generate_single_question(exam.subject_name, previous_questions=prev_questions)
+    resv_id = await get_active_reservation_id(db, exam.id)
+    new_q_data = await generate_single_question(
+        exam.subject_name, 
+        previous_questions=prev_questions,
+        faculty_id=exam.faculty_id,
+        exam_id=exam.id,
+        reservation_id=resv_id
+    )
     
     eq = ExamQuestion(
         exam_id=exam.id,
@@ -329,13 +397,20 @@ async def submit_student_answer(
     if not q:
         raise HTTPException(status_code=404, detail="Question not found")
         
-    # Evaluate using configured LLM (Gemini, ChatGPT, Claude, or Ollama)
+    run = await db.get(ExamRun, run_id)
+    exam = await db.get(Exam, run.exam_id) if run else None
+    resv_id = await get_active_reservation_id(db, exam.id) if exam else None
+
+    # Evaluate using configured LLM (Gemini, ChatGPT, Claude, or Ollama) with faculty attribution
     eval_result = await evaluate_answer(
         q.question_text,
         q.expected_answer or "",
         req.transcript,
         question_id=req.question_id,
-        student_id=student_id
+        student_id=student_id,
+        faculty_id=exam.faculty_id if exam else None,
+        exam_id=exam.id if exam else None,
+        reservation_id=resv_id
     )
     score_awarded = eval_result.get("score", 0.0)
     feedback = eval_result.get("feedback", "")
@@ -419,7 +494,15 @@ async def finish_student_viva(
             "score": a.score_awarded,
             "areas_to_improve": a.areas_to_improve or a.feedback or ""
         })
-    report = await generate_viva_improvement_report(exam.subject_name, qa_records)
+    resv_id = await get_active_reservation_id(db, exam.id)
+    report = await generate_viva_improvement_report(
+        exam.subject_name, 
+        qa_records,
+        faculty_id=exam.faculty_id,
+        exam_id=exam.id,
+        reservation_id=resv_id,
+        student_id=sr.student_id
+    )
     sr.feedback_notes = report
     
     await db.commit()
@@ -553,12 +636,18 @@ async def student_submit_answer(
     if not q:
         raise HTTPException(status_code=404, detail="Question not found")
         
+    exam = await db.get(Exam, exam_id)
+    resv_id = await get_active_reservation_id(db, exam_id)
+
     eval_result = await evaluate_answer(
         q.question_text,
         q.expected_answer or "",
         req.transcript,
         question_id=req.question_id,
-        student_id=sr.student_id
+        student_id=sr.student_id,
+        faculty_id=exam.faculty_id if exam else None,
+        exam_id=exam_id,
+        reservation_id=resv_id
     )
     score_awarded = eval_result.get("score", 0.0)
     feedback = eval_result.get("feedback", "")
@@ -646,3 +735,50 @@ async def reset_student_viva_for_reviva(
     await db.refresh(sr)
 
     return {"msg": "Re-Viva reset successful", "viva_run_id": sr.id, "assigned_question_ids": selected_ids}
+
+
+@router.post("/runs/{run_id}/finish", dependencies=[Depends(require_roles([RoleEnum.FACULTY, RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def finish_exam_run(
+    run_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Closes an active viva exam run and automatically reclaims all unspent reserved tokens.
+    Guarantees zero token wastage for absent or skipped students.
+    """
+    run = await db.get(ExamRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Exam run not found")
+
+    run.is_finished = True
+
+    # Reclaim all active token reservations for this exam
+    resv_res = await db.execute(
+        select(ExamTokenReservation).where(
+            ExamTokenReservation.exam_id == run.exam_id,
+            ExamTokenReservation.status == "ACTIVE"
+        )
+    )
+    active_resvs = resv_res.scalars().all()
+    total_reclaimed = 0
+    total_consumed = 0
+    reclaimed_records = []
+
+    for r in active_resvs:
+        rec = await reclaim_token_reservation(r.id)
+        reclaimed_records.append(rec)
+        total_reclaimed += rec.get("tokens_reclaimed", 0)
+        total_consumed += rec.get("tokens_consumed", 0)
+
+    await db.commit()
+    await db.refresh(run)
+
+    return {
+        "msg": "Exam session concluded with zero token wastage.",
+        "run_id": run.id,
+        "is_finished": True,
+        "tokens_consumed": total_consumed,
+        "tokens_reclaimed": total_reclaimed,
+        "reservations": reclaimed_records
+    }
+

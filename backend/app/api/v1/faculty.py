@@ -3,15 +3,17 @@ import shutil
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
+from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 
 from app.api.deps import get_db, require_roles, get_current_user
 from app.models.user import User, RoleEnum
-from app.models.profile import Class, FacultyProfile, FacultyAssignment
+from app.models.profile import Class, FacultyProfile, FacultyAssignment, StudentProfile
 from app.models.exam import Exam, GradingScheme, ExamMaterial, ExamQuestion
+from app.models.ai_billing import AISettings, ExamTokenReservation
 from app.ai.document_parser import extract_text, extract_qa_pairs
-from app.ai.llm import generate_questions_from_text, generate_answer_for_question, tag_bloom_level
+from app.ai.llm import generate_questions_from_text, generate_answer_for_question, tag_bloom_level, estimate_exam_tokens
 
 router = APIRouter()
 
@@ -369,7 +371,9 @@ async def generate_questions(
                     a_text = await generate_answer_for_question(
                         q_text, 
                         subject_name=exam.subject_name, 
-                        context_text=context_source
+                        context_text=context_source,
+                        faculty_id=prof.id if prof else None,
+                        exam_id=exam.id
                     )
 
                 new_q = ExamQuestion(
@@ -390,7 +394,9 @@ async def generate_questions(
                         mat_text,
                         needed,
                         blooms_taxonomy=bool(exam.blooms_taxonomy),
-                        material_title=mat.filename
+                        material_title=mat.filename,
+                        faculty_id=faculty.id,
+                        exam_id=exam.id
                     )
                     for q_data in extra_qs:
                         new_q = ExamQuestion(
@@ -412,7 +418,9 @@ async def generate_questions(
                 mat_text, 
                 mat_count, 
                 blooms_taxonomy=bool(exam.blooms_taxonomy),
-                material_title=mat.filename
+                material_title=mat.filename,
+                faculty_id=faculty.id,
+                exam_id=exam.id
             )
 
             for q_data in q_list:
@@ -725,4 +733,145 @@ async def update_exam_type(
     await db.commit()
     await db.refresh(exam)
     return {"msg": "Exam type updated", "exam_id": exam.id, "exam_type": exam.exam_type}
+
+
+@router.get("/exams/{exam_id}/token-estimate", dependencies=[Depends(require_roles([RoleEnum.FACULTY, RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def get_exam_token_estimate(
+    exam_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Computes zero-waste token estimate for an exam:
+    - Phase 1: Question generation (if needed)
+    - Phase 2: Live viva execution based on enrolled students
+    - Real-time balance check and faculty quota ceiling check
+    """
+    exam = await db.get(Exam, exam_id)
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+
+    # Fetch faculty
+    faculty = None
+    if current_user.role == RoleEnum.FACULTY:
+        prof_res = await db.execute(select(FacultyProfile).where(FacultyProfile.user_id == current_user.id))
+        faculty = prof_res.scalars().first()
+        if not faculty or exam.faculty_id != faculty.id:
+            raise HTTPException(status_code=403, detail="Not authorized to access this exam")
+    else:
+        faculty = await db.get(FacultyProfile, exam.faculty_id)
+
+    # 1. Enrolled student count in class
+    st_count_res = await db.execute(
+        select(func.count(StudentProfile.id)).where(StudentProfile.class_id == exam.class_id)
+    )
+    student_count = st_count_res.scalar() or 0
+
+    # 2. Existing question count
+    q_count_res = await db.execute(
+        select(func.count(ExamQuestion.id)).where(ExamQuestion.exam_id == exam.id)
+    )
+    existing_questions_count = q_count_res.scalar() or 0
+
+    # 3. Preparation questions needed (0 if already created)
+    needed_prep_questions = 0 if existing_questions_count >= (exam.questions_per_student or 3) else max(0, 15 - existing_questions_count)
+
+    # 4. Compute formula
+    estimates = estimate_exam_tokens(
+        num_students=student_count,
+        num_questions_per_student=exam.questions_per_student or 3,
+        generate_questions_count=needed_prep_questions
+    )
+
+    # 5. Fetch institutional balance
+    st_res = await db.execute(select(AISettings).limit(1))
+    st = st_res.scalars().first()
+    institutional_balance = st.token_balance if st else 0
+
+    # 6. Faculty quota status
+    faculty_quota_ceiling = faculty.token_quota_ceiling if faculty else None
+    faculty_consumed = faculty.total_tokens_consumed if faculty else 0
+    quota_remaining = (faculty_quota_ceiling - faculty_consumed) if faculty_quota_ceiling is not None else None
+
+    is_sufficient = institutional_balance >= estimates["total_estimated"]
+    if quota_remaining is not None and quota_remaining < estimates["total_estimated"]:
+        is_sufficient = False
+
+    return {
+        "exam_id": exam.id,
+        "subject_name": exam.subject_name,
+        "class_id": exam.class_id,
+        "enrolled_students": student_count,
+        "questions_per_student": exam.questions_per_student or 3,
+        "existing_questions_count": existing_questions_count,
+        "needed_prep_questions": needed_prep_questions,
+        "estimates": estimates,
+        "institutional_token_balance": institutional_balance,
+        "is_balance_sufficient": is_sufficient,
+        "faculty_quota_ceiling": faculty_quota_ceiling,
+        "faculty_tokens_consumed": faculty_consumed,
+        "faculty_quota_remaining": quota_remaining,
+        "zero_waste_guarantee": "Only active viva answers are billed. Unused tokens from absent students are automatically reclaimed into the central pool upon exam completion."
+    }
+
+
+@router.get("/wallet", dependencies=[Depends(require_roles([RoleEnum.FACULTY, RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def get_faculty_wallet_status(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Returns the real-time AI token wallet, quota status, active reservations, and zero-waste savings for the authenticated faculty.
+    """
+    prof_res = await db.execute(
+        select(FacultyProfile)
+        .options(selectinload(FacultyProfile.department))
+        .where(FacultyProfile.user_id == current_user.id)
+    )
+    prof = prof_res.scalars().first()
+    if not prof:
+        raise HTTPException(status_code=404, detail="Faculty profile not found")
+
+    st_res = await db.execute(select(AISettings).limit(1))
+    st = st_res.scalars().first()
+    institutional_balance = st.token_balance if st else 0
+
+    active_resv_res = await db.execute(
+        select(ExamTokenReservation).where(
+            ExamTokenReservation.faculty_id == prof.id,
+            ExamTokenReservation.status == "ACTIVE"
+        )
+    )
+    active_resvs = active_resv_res.scalars().all()
+    active_reserved_tokens = sum(r.estimated_tokens or 0 for r in active_resvs)
+
+    all_resv_res = await db.execute(
+        select(ExamTokenReservation).where(ExamTokenReservation.faculty_id == prof.id)
+    )
+    all_resvs = all_resv_res.scalars().all()
+    tokens_reclaimed = sum(r.tokens_reclaimed or 0 for r in all_resvs)
+
+    tokens_consumed = prof.total_tokens_consumed or 0
+    quota_ceiling = prof.token_quota_ceiling
+    quota_remaining = (quota_ceiling - tokens_consumed) if quota_ceiling is not None else None
+    dept_name = prof.department.name if prof.department else "General Faculty"
+
+    return {
+        "faculty_id": prof.id,
+        "faculty_name": prof.name,
+        "email": current_user.email,
+        "department": dept_name,
+        "tokens_consumed": tokens_consumed,
+        "quota_ceiling": quota_ceiling,
+        "quota_remaining": max(0, quota_remaining) if quota_remaining is not None else None,
+        "has_quota_limit": quota_ceiling is not None,
+        "active_reserved_tokens": active_reserved_tokens,
+        "active_reservations_count": len(active_resvs),
+        "tokens_reclaimed": tokens_reclaimed,
+        "institutional_token_balance": institutional_balance,
+        "is_depleted": (institutional_balance <= 0) and (st.active_provider != "ollama" if st else False),
+        "active_provider": st.active_provider if st else "gemini"
+    }
+
+
 

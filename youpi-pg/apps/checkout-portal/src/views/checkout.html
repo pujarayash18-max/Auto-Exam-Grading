@@ -425,6 +425,37 @@
     let hasAttemptedAutoLogin = false;
     let otpCooldownTimer = null;
     let otpCooldownSec = 0;
+    let latestDevOtp = '';
+
+    function applyDevOtp(otp) {
+      if (!otp) return;
+      latestDevOtp = String(otp);
+      const helpBox = document.getElementById('otpHelpTipBox');
+      if (helpBox) {
+        helpBox.hidden = false;
+        helpBox.innerHTML = `
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+            <div>Verification Code: <strong style="font-size:13px; color:#0284c7; letter-spacing:1px;">${otp}</strong></div>
+            <button type="button" class="ypg-btn-link" style="color:#0284c7; font-weight:600;" onclick="fillDevOtp('${otp}')">Auto-fill</button>
+          </div>
+        `;
+      }
+      const otpInput = document.getElementById('authOtpInput');
+      if (otpInput && !otpInput.value) {
+        otpInput.value = otp;
+        otpInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }
+
+    function fillDevOtp(otp) {
+      const otpInput = document.getElementById('authOtpInput');
+      if (otpInput) {
+        otpInput.value = otp;
+        otpInput.dispatchEvent(new Event('input', { bubbles: true }));
+        otpInput.focus();
+      }
+    }
+
 
     function setGatewayAuthMode(isAuthView) {
       const authEl = document.getElementById('preGatewayAuthView');
@@ -517,10 +548,20 @@
         if (badge) badge.innerText = '+91 ' + currentAuthMobile;
         const otpInput = document.getElementById('authOtpInput');
         if (otpInput) {
-          otpInput.value = '';
+          otpInput.value = latestDevOtp || '';
           setTimeout(() => otpInput.focus(), 50);
         }
+        if (latestDevOtp) {
+          applyDevOtp(latestDevOtp);
+        }
         startOtpCooldown(30);
+      }
+    }
+
+    function toggleOtpHelpTip() {
+      const box = document.getElementById('otpHelpTipBox');
+      if (box) {
+        box.hidden = !box.hidden;
       }
     }
 
@@ -601,15 +642,18 @@
             })
           });
           const sendData = await sendRes.json();
-          if (sendData && sendData.devOtp) lastReceivedDevOtp = sendData.devOtp;
 
           const greetingEl = document.getElementById('authOtpGreeting');
           if (greetingEl) {
-            greetingEl.innerHTML = `Welcome back, <strong>${escapeHtml(data.customer.name)}</strong>! Enter the 6-digit WhatsApp OTP:`;
+            greetingEl.innerHTML = `Welcome back, <strong>${escapeHtml(data.customer.name)}</strong>! Enter the 6-digit verification code:`;
+          }
+
+          if (sendData && sendData.devOtp) {
+            applyDevOtp(sendData.devOtp);
           }
 
           goToAuthStep('otp');
-          showOptionToast('OTP sent to your WhatsApp number!');
+          showOptionToast(sendData.message || 'Verification code sent to your phone and email!');
         } else if (savedMatch) {
           // Known customer in browser saved accounts -> dispatch OTP directly with saved profile
           currentAuthName = savedMatch.name || 'Customer';
@@ -626,15 +670,18 @@
             })
           });
           const sendData = await sendRes.json();
-          if (sendData && sendData.devOtp) lastReceivedDevOtp = sendData.devOtp;
 
           const greetingEl = document.getElementById('authOtpGreeting');
           if (greetingEl) {
-            greetingEl.innerHTML = `Welcome back, <strong>${escapeHtml(currentAuthName)}</strong>! Enter the 6-digit WhatsApp OTP:`;
+            greetingEl.innerHTML = `Welcome back, <strong>${escapeHtml(currentAuthName)}</strong>! Enter the 6-digit verification code:`;
+          }
+
+          if (sendData && sendData.devOtp) {
+            applyDevOtp(sendData.devOtp);
           }
 
           goToAuthStep('otp');
-          showOptionToast('OTP sent to your WhatsApp number!');
+          showOptionToast(sendData.message || 'Verification code sent to your phone and email!');
         } else {
           // New customer -> prompt for name and email
           goToAuthStep('signup');
@@ -685,15 +732,17 @@
           })
         });
         const data = await res.json();
-        if (data && data.devOtp) lastReceivedDevOtp = data.devOtp;
 
         if (res.ok) {
           const greetingEl = document.getElementById('authOtpGreeting');
           if (greetingEl) {
-            greetingEl.innerHTML = `Hello <strong>${escapeHtml(name)}</strong>! Enter the 6-digit WhatsApp OTP:`;
+            greetingEl.innerHTML = `Hello <strong>${escapeHtml(name)}</strong>! Enter the 6-digit verification code:`;
+          }
+          if (data && data.devOtp) {
+            applyDevOtp(data.devOtp);
           }
           goToAuthStep('otp');
-          showOptionToast('WhatsApp verification code sent!');
+          showOptionToast(data.message || 'Verification code sent to your phone and email!');
         } else {
           showOptionToast(data.error || 'Failed to send WhatsApp OTP.');
         }
@@ -781,11 +830,14 @@
         });
         const data = await res.json();
         if (res.ok) {
+          if (data && data.devOtp) {
+            applyDevOtp(data.devOtp);
+          }
           startOtpCooldown(30);
-          showOptionToast('Fresh OTP dispatched to your WhatsApp number!');
+          showOptionToast(data.message || 'Fresh OTP dispatched to your phone and email!');
           const otpInput = document.getElementById('authOtpInput');
           if (otpInput) {
-            otpInput.value = '';
+            otpInput.value = data?.devOtp || '';
             otpInput.focus();
           }
         } else {
@@ -846,22 +898,21 @@
           })
         });
         const data = await res.json();
-        if (data && data.devOtp) lastReceivedDevOtp = data.devOtp;
 
         if (!res.ok) {
-          showOptionToast(data.error || 'Failed to send WhatsApp OTP.');
+          showOptionToast(data.error || 'Failed to send verification code.');
           return;
         }
 
         const greetingEl = document.getElementById('authOtpGreeting');
         if (greetingEl) {
-          greetingEl.innerHTML = `Welcome back, <strong>${escapeHtml(account.name || 'Customer')}</strong>! Enter the 6-digit WhatsApp OTP:`;
+          greetingEl.innerHTML = `Welcome back, <strong>${escapeHtml(account.name || 'Customer')}</strong>! Enter the 6-digit verification code:`;
         }
         const badge = document.getElementById('authOtpPhoneBadge');
         if (badge) badge.innerText = '+91 ' + clean;
 
         goToAuthStep('otp');
-        showOptionToast('WhatsApp verification code sent!');
+        showOptionToast(data.message || 'Verification code sent to your phone and email!');
       } catch (err) {
         console.error('[Select Saved Account Error]:', err);
         showOptionToast('Network error sending WhatsApp OTP.');
@@ -2428,6 +2479,47 @@
           loadState();
         }
       } catch (e) { }
+    }
+
+    // --- TEST MODE PAYMENT SIMULATOR ---
+    async function simulatePaymentSuccess() {
+      const btn = document.getElementById('btnSimulateSuccess');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span>Simulating Bank Credit...</span>';
+      }
+      openProcessingModal('Simulating UPI Payment', 'Settling transaction with test banking core...');
+      showOptionToast('Simulating successful bank payment...');
+
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/checkout/${PAYMENT_ID}/simulate-success`, {
+          method: 'POST',
+          headers: getApiHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            utr: 'UTR' + Date.now().toString().slice(-8),
+            payerVpa: (activeCustomer && activeCustomer.mobileNumber ? activeCustomer.mobileNumber : '6351817769') + '@okaxis'
+          })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showOptionToast('Payment verified successfully!');
+          loadState();
+        } else {
+          closeProcessingModal();
+          showOptionToast(data.error || 'Failed to simulate payment');
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = 'Simulate Successful Payment &rsaquo;';
+          }
+        }
+      } catch (e) {
+        closeProcessingModal();
+        showOptionToast('Network error while simulating payment.');
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = 'Simulate Successful Payment &rsaquo;';
+        }
+      }
     }
 
     // --- SINGLE ACTIVE PAYMENT SESSION CONFLICT RESOLUTION ---

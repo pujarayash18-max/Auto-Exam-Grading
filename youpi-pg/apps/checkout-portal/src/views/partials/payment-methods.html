@@ -187,6 +187,18 @@
                     <div>Payment is detected automatically, or tap <strong>Continue</strong> below after paying.</div>
                   </div>
                 </div>
+
+                <!-- Local / Test Mode Simulator Banner -->
+                <div id="devSimulatePaymentBox" style="margin-top:14px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:12px 14px; display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                  <div>
+                    <div style="font-size:11px; font-weight:800; color:#15803d; text-transform:uppercase; letter-spacing:0.5px;">Testing &amp; Sandbox Simulator</div>
+                    <div style="font-size:12px; color:#166534; font-weight:500; margin-top:2px;">Simulate instant bank settlement without live UPI debit</div>
+                  </div>
+                  <button type="button" id="btnSimulateSuccess" style="padding:8px 14px; font-size:12px; font-weight:600; color:#ffffff; background:#16a34a; border:none; border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; gap:6px; white-space:nowrap;" onclick="simulatePaymentSuccess()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span>Simulate Successful Payment</span>
+                  </button>
+                </div>
               </div>
 
               <!-- VIEW COD: CASH ON DELIVERY (ONLINE SELLING MODE) -->

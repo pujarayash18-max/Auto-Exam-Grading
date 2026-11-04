@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { Coins, Zap, RotateCcw, Cpu } from 'lucide-react';
 
 interface GradingSchemeTier {
   grade_label: string;
@@ -70,6 +71,7 @@ export default function FacultyDashboard() {
   const [exams, setExams] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [wallet, setWallet] = useState<any>(null);
 
   // Modal States
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
@@ -199,12 +201,14 @@ export default function FacultyDashboard() {
         router.push('/auth/login');
         return;
       }
-      const [examsRes, assignmentsRes] = await Promise.all([
+      const [examsRes, assignmentsRes, walletRes] = await Promise.all([
         fetch('http://localhost:8000/api/v1/faculty/exams', { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch('http://localhost:8000/api/v1/faculty/assignments', { headers: { 'Authorization': `Bearer ${token}` } })
+        fetch('http://localhost:8000/api/v1/faculty/assignments', { headers: { 'Authorization': `Bearer ${token}` } }),
+        fetch('http://localhost:8000/api/v1/faculty/wallet', { headers: { 'Authorization': `Bearer ${token}` } })
       ]);
       if (examsRes.ok) setExams(await examsRes.json());
       if (assignmentsRes.ok) setAssignments(await assignmentsRes.json());
+      if (walletRes.ok) setWallet(await walletRes.json());
     } catch (err) {
       console.error(err);
     }
@@ -776,6 +780,89 @@ export default function FacultyDashboard() {
             Manage your assigned classes and schedule upcoming vivas.
           </p>
         </header>
+
+        {/* AI Token Wallet & Telemetry Banner */}
+        {wallet && (
+          <div className="p-5 rounded-2xl bg-card border border-border">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 mb-4 border-b border-border">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-primary/10 text-primary border border-primary/20">
+                  <Coins className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-foreground tracking-tight">AI Token Wallet & Resource Allocation</h3>
+                  <p className="text-xs text-muted-foreground">Zero-waste pooled token budget managed by institutional AI governance.</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <span className={`text-xs px-2.5 py-1 rounded-md font-medium border ${wallet.is_depleted ? 'bg-red-500/10 text-red-500 border-red-500/20' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'}`}>
+                  {wallet.is_depleted ? 'Pool Depleted' : 'Allocation Healthy'}
+                </span>
+                <span className="text-xs px-2.5 py-1 rounded-md bg-muted text-muted-foreground font-mono border border-border">
+                  Pool: {Math.round(wallet.institutional_token_balance / 1000)}k tokens
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Card 1: Quota Ceiling / Remaining */}
+              <div className="p-4 rounded-xl bg-background border border-border flex flex-col justify-between">
+                <div className="flex items-center justify-between text-muted-foreground text-xs mb-2">
+                  <span>Spending Quota</span>
+                  <Coins className="w-4 h-4 text-primary" />
+                </div>
+                <div className="text-xl font-bold font-mono text-foreground tracking-tight">
+                  {wallet.has_quota_limit ? `${(wallet.quota_remaining ?? 0).toLocaleString()} left` : 'Unlimited'}
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  {wallet.has_quota_limit ? `Cap: ${wallet.quota_ceiling?.toLocaleString()} tokens` : 'Standard institutional allowance'}
+                </div>
+              </div>
+
+              {/* Card 2: Consumed */}
+              <div className="p-4 rounded-xl bg-background border border-border flex flex-col justify-between">
+                <div className="flex items-center justify-between text-muted-foreground text-xs mb-2">
+                  <span>Tokens Consumed</span>
+                  <Cpu className="w-4 h-4 text-blue-500" />
+                </div>
+                <div className="text-xl font-bold font-mono text-foreground tracking-tight">
+                  {wallet.tokens_consumed.toLocaleString()}
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  Question prep & live oral vivas
+                </div>
+              </div>
+
+              {/* Card 3: Active JIT Soft Lock */}
+              <div className="p-4 rounded-xl bg-background border border-border flex flex-col justify-between">
+                <div className="flex items-center justify-between text-muted-foreground text-xs mb-2">
+                  <span>In-Flight Soft Lock</span>
+                  <Zap className="w-4 h-4 text-amber-500" />
+                </div>
+                <div className="text-xl font-bold font-mono text-foreground tracking-tight">
+                  {wallet.active_reserved_tokens.toLocaleString()}
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  {wallet.active_reservations_count === 0 ? 'No active exam lock' : `${wallet.active_reservations_count} exam(s) in progress`}
+                </div>
+              </div>
+
+              {/* Card 4: Zero-Waste Reclaimed */}
+              <div className="p-4 rounded-xl bg-background border border-border flex flex-col justify-between">
+                <div className="flex items-center justify-between text-muted-foreground text-xs mb-2">
+                  <span>Zero-Waste Reclaimed</span>
+                  <RotateCcw className="w-4 h-4 text-emerald-500" />
+                </div>
+                <div className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400 tracking-tight">
+                  +{wallet.tokens_reclaimed.toLocaleString()}
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  Returned to pool on exam finish
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Assignments */}

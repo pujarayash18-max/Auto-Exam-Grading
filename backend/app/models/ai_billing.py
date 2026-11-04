@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, BigInteger, String, Float, Boolean, Text, DateTime
+from sqlalchemy import Column, Integer, BigInteger, String, Float, Boolean, Text, DateTime, ForeignKey
+from sqlalchemy.orm import relationship
 from app.models.base import Base
 
 class AISettings(Base):
@@ -79,8 +80,30 @@ class AITokenUsageLog(Base):
     cost_usd = Column(Float, default=0.0, nullable=False)
     question_id = Column(Integer, nullable=True)
     student_id = Column(Integer, nullable=True)
+    faculty_id = Column(Integer, nullable=True, index=True)
+    exam_id = Column(Integer, nullable=True, index=True)
+    reservation_id = Column(Integer, nullable=True, index=True)
     status = Column(String, default="SUCCESS", nullable=False)
     notes = Column(Text, nullable=True)
+
+
+class ExamTokenReservation(Base):
+    __tablename__ = "exam_token_reservations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    exam_id = Column(Integer, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    faculty_id = Column(Integer, ForeignKey("faculty_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    reservation_type = Column(String, default="VIVA_EVALUATION", nullable=False) # "QUESTION_GENERATION", "VIVA_EVALUATION"
+    estimated_tokens = Column(BigInteger, nullable=False, default=0)
+    tokens_consumed = Column(BigInteger, default=0, nullable=False)
+    tokens_reclaimed = Column(BigInteger, default=0, nullable=False)
+    status = Column(String, default="ACTIVE", nullable=False) # "ACTIVE", "RECLAIMED", "EXPIRED"
+    notes = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+
+    exam = relationship("Exam")
+    faculty = relationship("FacultyProfile")
 
 
 class TokenRechargeTransaction(Base):
@@ -104,3 +127,4 @@ class TokenRechargeTransaction(Base):
     utr_reference = Column(String, nullable=True)
     status = Column(String, default="COMPLETED", nullable=False) # "COMPLETED", "PENDING", "FAILED"
     reference_note = Column(String, nullable=True)
+

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, ForeignKey, UniqueConstraint, BigInteger
 from sqlalchemy.orm import relationship
 from .base import Base
 
@@ -35,6 +35,8 @@ class FacultyProfile(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
     name = Column(String, nullable=False)
+    token_quota_ceiling = Column(BigInteger, nullable=True, default=None) # None = unlimited fair-share from pool
+    total_tokens_consumed = Column(BigInteger, default=0, nullable=False)
 
     user = relationship("User")
     department = relationship("Department", back_populates="faculties")

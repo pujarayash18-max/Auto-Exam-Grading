@@ -9,10 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func, delete
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db, require_roles
-from app.models.user import RoleEnum
-from app.models.ai_billing import AISettings, PrepaidPlan, AITokenUsageLog, TokenRechargeTransaction
+from app.models.user import User, RoleEnum
+from app.models.profile import FacultyProfile
+from app.models.exam import Exam
+from app.models.ai_billing import AISettings, PrepaidPlan, AITokenUsageLog, TokenRechargeTransaction, ExamTokenReservation
 
 router = APIRouter()
 
@@ -488,6 +491,16 @@ async def _settle_recharge_transaction(
     return txn.invoice_number
 
 
+def _resolve_youpi_internal_url(settings_obj: AISettings) -> str:
+    env_internal = os.environ.get("YOUPI_INTERNAL_API_URL")
+    if env_internal:
+        return env_internal.rstrip("/")
+    base = (settings_obj.youpi_api_url or "http://localhost:6100").rstrip("/")
+    if "localhost" in base and os.environ.get("ENVIRONMENT") != "development_host":
+        return base.replace("localhost", "youpi")
+    return base
+
+
 @router.post("/recharge/create-order", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN]))])
 async def create_payment_order(req: CreateOrderRequest, db: AsyncSession = Depends(get_db)):
     """
@@ -563,52 +576,79 @@ async def create_payment_order(req: CreateOrderRequest, db: AsyncSession = Depen
     youpi_checkout_url = None
 
     if is_youpi:
-        youpi_api_base = (settings_obj.youpi_api_url or "http://localhost:6100").rstrip("/")
-        # Detect if running in Docker container and resolve localhost to host / container network
-        internal_api_url = os.environ.get("YOUPI_INTERNAL_API_URL") or youpi_api_base
-        if "localhost" in internal_api_url and os.environ.get("ENVIRONMENT") != "development_host":
-            # In container network, attempt youpi:6100 first, fallback to host.docker.internal:6100
-            internal_api_url = internal_api_url.replace("localhost", "host.docker.internal")
+        internal_api_url = _resolve_youpi_internal_url(settings_obj)
 
         try:
             headers = {"Content-Type": "application/json"}
             if settings_obj.youpi_merchant_id:
                 headers["X-Merchant-Id"] = settings_obj.youpi_merchant_id
-            if settings_obj.youpi_api_key or settings_obj.youpi_webhook_secret:
-                headers["X-Merchant-Key"] = settings_obj.youpi_api_key or settings_obj.youpi_webhook_secret
+            if settings_obj.youpi_api_key and settings_obj.youpi_api_key.strip():
+                headers["X-Merchant-Key"] = settings_obj.youpi_api_key.strip()
+
+            payment_payload = {
+                "orderId": transaction_id,
+                "amount": f"{total_payable:.2f}",
+                "currency": "INR",
+                "customer": {
+                    "name": "AutoExam SuperAdmin",
+                    "email": "admin@autoexam.com"
+                },
+                "description": f"AutoExam AI Token Recharge ({plan_name})",
+                "returnUrl": f"http://localhost:3000/superadmin/ai-settings?txn={transaction_id}",
+                "metadata": {
+                    "transaction_id": transaction_id,
+                    "plan_id": req.plan_id,
+                    "tokens": str(tokens)
+                }
+            }
 
             async with httpx.AsyncClient(timeout=8.0) as client:
                 res = await client.post(
                     f"{internal_api_url}/api/v1/payments",
                     headers=headers,
-                    json={
-                        "orderId": transaction_id,
-                        "amount": f"{total_payable:.2f}",
-                        "currency": "INR",
-                        "customer": {
-                            "name": "AutoExam SuperAdmin",
-                            "email": "admin@autoexam.com"
-                        },
-                        "description": f"AutoExam AI Token Recharge ({plan_name})",
-                        "returnUrl": f"http://localhost:3000/superadmin/ai-settings?txn={transaction_id}",
-                        "metadata": {
-                            "transaction_id": transaction_id,
-                            "plan_id": req.plan_id,
-                            "tokens": str(tokens)
-                        }
-                    }
+                    json=payment_payload
                 )
+                if res.status_code == 401 and "X-Merchant-Key" in headers:
+                    retry_headers = {"Content-Type": "application/json"}
+                    if "X-Merchant-Id" in headers:
+                        retry_headers["X-Merchant-Id"] = headers["X-Merchant-Id"]
+                    res = await client.post(
+                        f"{internal_api_url}/api/v1/payments",
+                        headers=retry_headers,
+                        json=payment_payload
+                    )
+
                 if res.status_code in (200, 201):
                     ydata = res.json()
                     youpi_payment_id = ydata.get("paymentId")
+                else:
+                    print(f"YouPI payment creation returned HTTP {res.status_code}: {res.text}")
         except Exception as yerr:
             print(f"YouPI API session creation note: {yerr}")
 
         if not youpi_payment_id:
-            youpi_payment_id = f"youpi_{uuid.uuid4().hex[:12]}"
+            # Fallback to local loopback if container bridge had a temporary glitch
+            try:
+                fallback_url = "http://127.0.0.1:6100" if internal_api_url != "http://127.0.0.1:6100" else "http://youpi:6100"
+                async with httpx.AsyncClient(timeout=4.0) as client:
+                    res = await client.post(
+                        f"{fallback_url}/api/v1/payments",
+                        headers={"Content-Type": "application/json"},
+                        json=payment_payload
+                    )
+                    if res.status_code in (200, 201):
+                        youpi_payment_id = res.json().get("paymentId")
+            except Exception as fb_err:
+                print(f"YouPI fallback attempt error: {fb_err}")
 
         public_checkout_base = (settings_obj.youpi_checkout_url or "http://localhost:7000").rstrip("/")
-        youpi_checkout_url = f"{public_checkout_base}/checkout/{youpi_payment_id}"
+        if youpi_payment_id:
+            youpi_checkout_url = f"{public_checkout_base}/checkout/{youpi_payment_id}"
+        else:
+            raise HTTPException(
+                status_code=502,
+                detail="Unable to initialize YouPI Sovereign Gateway session. Please verify that the YouPI service is running."
+            )
 
     # Determine payment gateway name
     if is_youpi:
@@ -678,18 +718,17 @@ async def get_order_status(transaction_id: str, db: AsyncSession = Depends(get_d
 
     # If pending and linked to YouPI, check live YouPI status
     if txn.status == "PENDING" and txn.youpi_payment_id:
-        youpi_api_base = (settings_obj.youpi_api_url or "http://localhost:6100").rstrip("/")
-        internal_api_url = youpi_api_base
-        if "localhost" in internal_api_url and os.environ.get("ENVIRONMENT") != "development_host":
-            internal_api_url = internal_api_url.replace("localhost", "host.docker.internal")
+        internal_api_url = _resolve_youpi_internal_url(settings_obj)
 
         try:
             headers = {}
-            if settings_obj.youpi_api_key or settings_obj.youpi_webhook_secret:
-                headers["X-Merchant-Key"] = settings_obj.youpi_api_key or settings_obj.youpi_webhook_secret
+            if settings_obj.youpi_api_key and settings_obj.youpi_api_key.strip():
+                headers["X-Merchant-Key"] = settings_obj.youpi_api_key.strip()
 
             async with httpx.AsyncClient(timeout=4.0) as client:
                 yres = await client.get(f"{internal_api_url}/api/v1/payments/{txn.youpi_payment_id}", headers=headers)
+                if yres.status_code == 401 and "X-Merchant-Key" in headers:
+                    yres = await client.get(f"{internal_api_url}/api/v1/payments/{txn.youpi_payment_id}")
                 if yres.status_code == 200:
                     ydata = yres.json()
                     ystatus = str(ydata.get("status", "")).upper()
@@ -869,10 +908,8 @@ async def test_youpi_connection(db: AsyncSession = Depends(get_db)):
     Super Admin utility to test network connectivity to the YouPI Sovereign Gateway.
     """
     settings_obj = await get_or_create_ai_settings(db)
+    internal_api_url = _resolve_youpi_internal_url(settings_obj)
     youpi_api_base = (settings_obj.youpi_api_url or "http://localhost:6100").rstrip("/")
-    internal_api_url = youpi_api_base
-    if "localhost" in internal_api_url and os.environ.get("ENVIRONMENT") != "development_host":
-        internal_api_url = internal_api_url.replace("localhost", "host.docker.internal")
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -1017,3 +1054,123 @@ async def list_recharge_transactions(db: AsyncSession = Depends(get_db)):
         }
         for t in txns
     ]
+
+
+class FacultyQuotaUpdateRequest(BaseModel):
+    token_quota_ceiling: Optional[int] = None  # None or 0 means unlimited
+
+
+@router.get("/faculty-breakdown", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def get_faculty_token_breakdown(db: AsyncSession = Depends(get_db)):
+    """
+    Returns zero-waste token allocation and consumption metrics per faculty member.
+    """
+    query = (
+        select(FacultyProfile, User)
+        .join(User, FacultyProfile.user_id == User.id)
+        .options(selectinload(FacultyProfile.department))
+        .order_by(FacultyProfile.name.asc())
+    )
+    result = await db.execute(query)
+    rows = result.all()
+
+    # Query active reservations per faculty
+    resv_query = select(ExamTokenReservation).where(ExamTokenReservation.status == "ACTIVE")
+    resv_res = await db.execute(resv_query)
+    active_resvs = resv_res.scalars().all()
+
+    active_by_faculty = {}
+    active_count_by_faculty = {}
+    for r in active_resvs:
+        fid = r.faculty_id
+        active_by_faculty[fid] = active_by_faculty.get(fid, 0) + (r.estimated_tokens or 0)
+        active_count_by_faculty[fid] = active_count_by_faculty.get(fid, 0) + 1
+
+    # Total reclaimed tokens across all historical reservations for this faculty
+    all_resv_res = await db.execute(select(ExamTokenReservation))
+    all_resvs = all_resv_res.scalars().all()
+    reclaimed_by_faculty = {}
+    for r in all_resvs:
+        fid = r.faculty_id
+        reclaimed_by_faculty[fid] = reclaimed_by_faculty.get(fid, 0) + (r.tokens_reclaimed or 0)
+
+    breakdown = []
+    for fac, usr in rows:
+        fid = fac.id
+        dept_name = fac.department.name if fac.department else "General Faculty"
+        breakdown.append({
+            "faculty_id": fid,
+            "user_id": usr.id,
+            "name": fac.name or f"Faculty #{fid}",
+            "email": usr.email,
+            "department": dept_name,
+            "total_tokens_consumed": fac.total_tokens_consumed or 0,
+            "token_quota_ceiling": fac.token_quota_ceiling,
+            "active_reserved_tokens": active_by_faculty.get(fid, 0),
+            "active_reservations_count": active_count_by_faculty.get(fid, 0),
+            "tokens_reclaimed": reclaimed_by_faculty.get(fid, 0)
+        })
+
+    return breakdown
+
+
+@router.put("/faculty/{faculty_id}/quota", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN]))])
+async def update_faculty_quota(
+    faculty_id: int, 
+    req: FacultyQuotaUpdateRequest, 
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Sets or resets the spending quota ceiling for a specific faculty member.
+    """
+    fac = await db.get(FacultyProfile, faculty_id)
+    if not fac:
+        raise HTTPException(status_code=404, detail="Faculty profile not found")
+
+    ceiling = req.token_quota_ceiling if (req.token_quota_ceiling and req.token_quota_ceiling > 0) else None
+    fac.token_quota_ceiling = ceiling
+    await db.commit()
+    await db.refresh(fac)
+
+    return {
+        "msg": "Faculty token quota ceiling updated successfully",
+        "faculty_id": fac.id,
+        "token_quota_ceiling": fac.token_quota_ceiling
+    }
+
+
+@router.get("/reservations", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def list_exam_token_reservations(db: AsyncSession = Depends(get_db)):
+    """
+    Returns complete ledger of JIT exam token reservations showing soft holds, real-time consumption,
+    and zero-waste reclaimed tokens.
+    """
+    res = await db.execute(
+        select(ExamTokenReservation, Exam, FacultyProfile, User)
+        .outerjoin(Exam, ExamTokenReservation.exam_id == Exam.id)
+        .outerjoin(FacultyProfile, ExamTokenReservation.faculty_id == FacultyProfile.id)
+        .outerjoin(User, FacultyProfile.user_id == User.id)
+        .order_by(desc(ExamTokenReservation.created_at))
+        .limit(100)
+    )
+    rows = res.all()
+
+    reservations = []
+    for r, ex, fac, usr in rows:
+        reservations.append({
+            "id": r.id,
+            "exam_id": r.exam_id,
+            "subject_name": ex.subject_name if ex else "Unknown Exam",
+            "faculty_id": r.faculty_id,
+            "faculty_name": usr.name if (usr and usr.name) else f"Faculty #{r.faculty_id}",
+            "reservation_type": r.reservation_type,
+            "estimated_tokens": r.estimated_tokens,
+            "tokens_consumed": r.tokens_consumed,
+            "tokens_reclaimed": r.tokens_reclaimed,
+            "status": r.status,
+            "notes": r.notes,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "closed_at": r.closed_at.isoformat() if r.closed_at else None
+        })
+    return reservations
+
