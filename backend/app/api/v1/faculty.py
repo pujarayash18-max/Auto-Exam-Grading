@@ -352,13 +352,30 @@ async def generate_questions(
                 break
 
     for mat in valid_materials:
-        # First: check if material contains explicit questions and/or answers (e.g. Q&A PDF or Questions list)
-        extracted_qa = extract_qa_pairs(mat.file_path, mat.material_type)
-        mat_count = allocations.get(mat.id, 1)
+        # Check if target_total already reached
+        remaining_needed = target_total - len(saved_questions)
+        if remaining_needed <= 0:
+            break
+
+        mat_count = min(allocations.get(mat.id, 1), remaining_needed)
+        if mat_count <= 0:
+            continue
+
+        is_qa_mode = exam.exam_type in ["qa_pdf", "both", "questions_only"]
+        is_slide_format = mat.material_type in ["ppt", "pptx", "lecture_slides"] or (mat.filename and mat.filename.lower().endswith((".ppt", ".pptx")))
+
+        # Only attempt raw Q&A extraction if explicitly in Q&A mode or not a slide presentation
+        extracted_qa = []
+        if is_qa_mode or not is_slide_format:
+            extracted_qa = extract_qa_pairs(mat.file_path, mat.material_type)
 
         if extracted_qa:
             # We found actual questions (and answers) directly in this document!
-            for q_idx, qa in enumerate(extracted_qa):
+            # Strictly cap extracted questions to mat_count for this material
+            selected_qa = extracted_qa[:mat_count]
+            for q_idx, qa in enumerate(selected_qa):
+                if len(saved_questions) >= target_total:
+                    break
                 q_text = qa["question_text"]
                 a_text = (qa.get("expected_answer") or "").strip()
 
@@ -386,8 +403,8 @@ async def generate_questions(
                 saved_questions.append(new_q)
 
             # If user wanted more questions than were in this document and this was not a strict Q&A PDF
-            if exam.exam_type != "qa_pdf" and len(extracted_qa) < mat_count:
-                needed = mat_count - len(extracted_qa)
+            if exam.exam_type != "qa_pdf" and len(saved_questions) < target_total and len(selected_qa) < mat_count:
+                needed = min(mat_count - len(selected_qa), target_total - len(saved_questions))
                 mat_text = extract_text(mat.file_path, mat.material_type)
                 if mat_text and len(mat_text.strip()) >= 10:
                     extra_qs = await generate_questions_from_text(
@@ -395,10 +412,12 @@ async def generate_questions(
                         needed,
                         blooms_taxonomy=bool(exam.blooms_taxonomy),
                         material_title=mat.filename,
-                        faculty_id=faculty.id,
+                        faculty_id=prof.id if prof else None,
                         exam_id=exam.id
                     )
                     for q_data in extra_qs:
+                        if len(saved_questions) >= target_total:
+                            break
                         new_q = ExamQuestion(
                             exam_id=exam.id,
                             question_text=q_data.get("question_text", f"Key question on {mat.filename}"),
@@ -419,11 +438,13 @@ async def generate_questions(
                 mat_count, 
                 blooms_taxonomy=bool(exam.blooms_taxonomy),
                 material_title=mat.filename,
-                faculty_id=faculty.id,
+                faculty_id=prof.id if prof else None,
                 exam_id=exam.id
             )
 
             for q_data in q_list:
+                if len(saved_questions) >= target_total:
+                    break
                 new_q = ExamQuestion(
                     exam_id=exam.id,
                     question_text=q_data.get("question_text", f"Key question on {mat.filename}"),
@@ -433,6 +454,38 @@ async def generate_questions(
                 db.add(new_q)
                 saved_questions.append(new_q)
 
+    # Top-up if total generated is still under target_total
+    if len(saved_questions) < target_total and valid_materials:
+        shortfall = target_total - len(saved_questions)
+        combined_text = "\n\n".join([extract_text(m.file_path, m.material_type) for m in valid_materials if extract_text(m.file_path, m.material_type)])
+        if not combined_text:
+            combined_text = f"Subject: {exam.subject_name}. Core theory, practical applications, and viva questions."
+        topup_qs = await generate_questions_from_text(
+            combined_text,
+            shortfall,
+            blooms_taxonomy=bool(exam.blooms_taxonomy),
+            material_title=exam.subject_name,
+            faculty_id=prof.id if prof else None,
+            exam_id=exam.id
+        )
+        for q_data in topup_qs:
+            if len(saved_questions) >= target_total:
+                break
+            new_q = ExamQuestion(
+                exam_id=exam.id,
+                question_text=q_data.get("question_text", f"Key question on {exam.subject_name}"),
+                expected_answer=q_data.get("expected_answer", "Key concepts and technical explanation."),
+                source_material_id=valid_materials[0].id
+            )
+            db.add(new_q)
+            saved_questions.append(new_q)
+
+    # Final hard limit safeguard: strictly enforce target_total
+    if len(saved_questions) > target_total:
+        excess = saved_questions[target_total:]
+        for eq in excess:
+            db.expunge(eq)
+        saved_questions = saved_questions[:target_total]
 
     await db.commit()
     for q in saved_questions:
@@ -802,6 +855,11 @@ async def get_exam_token_estimate(
         "subject_name": exam.subject_name,
         "class_id": exam.class_id,
         "enrolled_students": student_count,
+        "num_students": student_count,
+        "total_estimated": estimates.get("total_estimated", 0),
+        "prep_tokens": estimates.get("prep_tokens", 0),
+        "viva_tokens": estimates.get("viva_tokens", 0),
+        "per_student_tokens": estimates.get("per_student_tokens", 0),
         "questions_per_student": exam.questions_per_student or 3,
         "existing_questions_count": existing_questions_count,
         "needed_prep_questions": needed_prep_questions,

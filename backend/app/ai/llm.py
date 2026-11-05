@@ -507,9 +507,14 @@ async def generate_questions_from_text(
     all_questions = []
     seen_keys = set()
 
-    # Batching parameters: generate in manageable sets of 4 to 6 questions
-    batch_size = 5 if num_questions > 5 else num_questions
-    max_batches = max(1, (num_questions + batch_size - 1) // batch_size) + 2
+    # Dynamic batching: 5 for small, 8 for medium, 10 for larger sets
+    if num_questions <= 6:
+        batch_size = num_questions
+    elif num_questions <= 15:
+        batch_size = 8
+    else:
+        batch_size = 10
+    max_batches = max(2, (num_questions + batch_size - 1) // batch_size + 3)
     batch_idx = 0
     text_len = len(cleaned_text)
 

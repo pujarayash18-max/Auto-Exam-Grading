@@ -11,6 +11,12 @@ async def lifespan(app: FastAPI):
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            try:
+                from sqlalchemy import text
+                await conn.execute(text("ALTER TYPE studentvivastatus ADD VALUE IF NOT EXISTS 'PAUSED'"))
+                await conn.execute(text("ALTER TYPE studentvivastatus ADD VALUE IF NOT EXISTS 'ABSENT'"))
+            except Exception as enum_err:
+                print(f"Enum verification notice: {enum_err}")
     except Exception as e:
         print(f"Database table verification deferred: {e}")
     yield

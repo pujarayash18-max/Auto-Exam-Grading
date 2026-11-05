@@ -1514,16 +1514,16 @@ export default function FacultyDashboard() {
                           <input
                             type="number"
                             min="1"
-                            max="60"
+                            max="300"
                             value={totalQuestionsToGen}
                             onChange={e => setTotalQuestionsToGen(e.target.value)}
-                            className="w-14 bg-transparent text-white font-bold text-center text-sm focus:outline-none"
+                            className="w-16 bg-transparent text-white font-bold text-center text-sm focus:outline-none"
                           />
                           <span className="text-xs text-emerald-400 font-semibold">Qs</span>
                         </div>
 
                         <div className="flex gap-1">
-                          {['5', '10', '15', '20', '30'].map(q => (
+                          {['10', '25', '50', '100'].map(q => (
                             <button
                               key={q}
                               type="button"

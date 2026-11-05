@@ -41,6 +41,8 @@ export default function LiveVivaDashboard() {
 
   // Re-viva processing state
   const [revivaLoading, setRevivaLoading] = useState<number | null>(null);
+  const [isRerolling, setIsRerolling] = useState(false);
+  const [isPausing, setIsPausing] = useState(false);
 
   // Token Reservation & Zero-Waste Lifecycle
   const [tokenEstimate, setTokenEstimate] = useState<any | null>(null);
@@ -287,7 +289,11 @@ export default function LiveVivaDashboard() {
       }
 
       setQuestions(qData);
-      setCurrentQuestionIndex(0);
+      const resumeIndex = Math.min(
+        startStudentData.answered_count || 0,
+        Math.max(0, (Array.isArray(qData) ? qData.length : 1) - 1)
+      );
+      setCurrentQuestionIndex(resumeIndex);
       setActiveStudentId(verifyingStudent.student_id);
       setActiveVivaRunId(startStudentData.viva_run_id || activeRunId);
       setVerifyingStudent(null);
@@ -308,29 +314,40 @@ export default function LiveVivaDashboard() {
   };
 
   const handleSkipReroll = async () => {
-    if (!activeRunId) return;
+    if (!activeRunId || isRerolling) return;
+    setIsRerolling(true);
+    setGradingFeedback("Ollama is generating a fresh viva question...");
     try {
-      setGradingFeedback("Ollama is generating a fresh viva question...");
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://localhost:8000/api/v1/viva/runs/${activeRunId}/generate-question`, {
+      const currentQ = questions[currentQuestionIndex];
+      const params = new URLSearchParams();
+      if (activeStudentId) params.append('student_id', String(activeStudentId));
+      if (currentQ?.id) params.append('old_question_id', String(currentQ.id));
+      const qStr = params.toString() ? `?${params.toString()}` : '';
+
+      const res = await fetch(`http://localhost:8000/api/v1/viva/runs/${activeRunId}/generate-question${qStr}`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (res.ok) {
-        const newQ = await res.json();
-        const updated = [...questions];
-        updated[currentQuestionIndex] = newQ;
-        setQuestions(updated);
-        setTranscript('');
-        transcriptRef.current = '';
-        accumulatedTranscriptRef.current = '';
-        setGradingFeedback(null);
-        setGradingScore(null);
-        startTimer(Math.round(timerPerQuestion * 60));
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ detail: "Failed to generate question with Ollama" }));
+        throw new Error(errData.detail || "Failed to generate question with Ollama");
       }
-    } catch (err) {
+      const newQ = await res.json();
+      const updated = [...questions];
+      updated[currentQuestionIndex] = newQ;
+      setQuestions(updated);
+      setTranscript('');
+      transcriptRef.current = '';
+      accumulatedTranscriptRef.current = '';
+      setGradingFeedback(null);
+      setGradingScore(null);
+      startTimer(Math.round(timerPerQuestion * 60));
+    } catch (err: any) {
       console.error("Failed to reroll question:", err);
-      setGradingFeedback("Error generating new question with Ollama.");
+      setGradingFeedback("Error generating new question with Ollama: " + err.message);
+    } finally {
+      setIsRerolling(false);
     }
   };
 
@@ -458,8 +475,6 @@ export default function LiveVivaDashboard() {
       setGradingFeedback(null);
       setGradingScore(null);
       startTimer(Math.round(timerPerQuestion * 60));
-    } else {
-      handleSkipReroll();
     }
   };
 
@@ -485,14 +500,33 @@ export default function LiveVivaDashboard() {
   };
 
   const handlePauseStudent = async () => {
-    if (!activeVivaRunId || !activeStudentId || !activeRunId) return;
+    if (!activeStudentId || !activeRunId || isPausing) return;
+    setIsPausing(true);
     stopTimer();
+
+    // Stop active audio recording if in progress
+    if (isRecording) {
+      isRecordingRef.current = false;
+      setIsRecording(false);
+      if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch (e) {} }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try { mediaRecorderRef.current.stop(); } catch (e) {}
+      }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach(t => t.stop());
+      }
+    }
+
     try {
       const token = localStorage.getItem('access_token');
-      await fetch(`http://localhost:8000/api/v1/viva/runs/${activeRunId}/students/${activeStudentId}/pause`, {
+      const res = await fetch(`http://localhost:8000/api/v1/viva/runs/${activeRunId}/students/${activeStudentId}/pause`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ detail: "Failed to pause viva" }));
+        throw new Error(errData.detail || "Failed to pause viva");
+      }
       alert("Viva session paused.");
       await fetchRoster(activeRunId);
       setActiveStudentId(null);
@@ -500,6 +534,8 @@ export default function LiveVivaDashboard() {
       setQuestions([]);
     } catch (err: any) {
       alert("Error pausing viva: " + err.message);
+    } finally {
+      setIsPausing(false);
     }
   };
 
@@ -540,7 +576,9 @@ export default function LiveVivaDashboard() {
         throw new Error(err.detail || "Failed to conclude exam session");
       }
       const data = await res.json();
-      alert(`Exam Session Concluded!\n\nTokens Consumed: ${data.tokens_consumed.toLocaleString()}\nTokens Reclaimed to Pool: ${data.tokens_reclaimed.toLocaleString()}\n\nZero-Waste Guarantee: Unspent tokens from absent students or skipped questions have been refunded.`);
+      const consumed = (data.tokens_consumed ?? 0).toLocaleString();
+      const reclaimed = (data.tokens_reclaimed ?? 0).toLocaleString();
+      alert(`Exam Session Concluded!\n\nTokens Consumed: ${consumed}\nTokens Reclaimed to Pool: ${reclaimed}\n\nZero-Waste Guarantee: Unspent tokens from absent students or skipped questions have been refunded.`);
       setActiveRunId(null);
       setRoster([]);
       setSelectedExamId('');
@@ -614,10 +652,11 @@ export default function LiveVivaDashboard() {
                 <div className="mt-6 flex gap-3">
                   <button 
                     onClick={handleSkipReroll}
-                    className="h-9 px-3.5 bg-muted hover:bg-muted/80 border border-border rounded-lg text-xs font-medium text-foreground transition-colors flex items-center gap-2"
+                    disabled={isRerolling}
+                    className="h-9 px-3.5 bg-muted hover:bg-muted/80 border border-border rounded-lg text-xs font-medium text-foreground transition-colors flex items-center gap-2 disabled:opacity-50"
                   >
-                    <RefreshCw className="w-3.5 h-3.5 text-primary" />
-                    Reroll with Ollama
+                    <RefreshCw className={`w-3.5 h-3.5 text-primary ${isRerolling ? 'animate-spin' : ''}`} />
+                    {isRerolling ? 'Generating Question...' : 'Reroll with Ollama'}
                   </button>
                 </div>
               </div>
@@ -723,9 +762,10 @@ export default function LiveVivaDashboard() {
               </button>
               <button 
                 onClick={handlePauseStudent}
-                className="h-10 px-5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/20 rounded-lg font-semibold text-sm transition-colors"
+                disabled={isPausing}
+                className="h-10 px-5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/20 rounded-lg font-semibold text-sm transition-colors disabled:opacity-50"
               >
-                Pause Viva
+                {isPausing ? 'Pausing...' : 'Pause Viva'}
               </button>
             </div>
 
@@ -813,27 +853,34 @@ export default function LiveVivaDashboard() {
                     </div>
                   )}
 
-                  {tokenEstimate && (
-                    <div className="p-3.5 rounded-xl border border-primary/20 bg-primary/5 space-y-2 text-xs">
-                      <div className="flex items-center justify-between font-semibold text-foreground">
-                        <span>Estimated Token Budget</span>
-                        <span className="font-mono text-primary font-bold">
-                          ~{tokenEstimate.total_estimated.toLocaleString()} tokens
-                        </span>
+                  {tokenEstimate && (() => {
+                    const estTotal = tokenEstimate.total_estimated ?? tokenEstimate.estimates?.total_estimated ?? 0;
+                    const estPrep = tokenEstimate.prep_tokens ?? tokenEstimate.estimates?.prep_tokens ?? 0;
+                    const estViva = tokenEstimate.viva_tokens ?? tokenEstimate.estimates?.viva_tokens ?? 0;
+                    const estStudents = tokenEstimate.num_students ?? tokenEstimate.estimates?.num_students ?? tokenEstimate.enrolled_students ?? 0;
+
+                    return (
+                      <div className="p-3.5 rounded-xl border border-primary/20 bg-primary/5 space-y-2 text-xs">
+                        <div className="flex items-center justify-between font-semibold text-foreground">
+                          <span>Estimated Token Budget</span>
+                          <span className="font-mono text-primary font-bold">
+                            ~{estTotal.toLocaleString()} tokens
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-muted-foreground text-[11px]">
+                          <span>Phase 1 (Question Bank Prep)</span>
+                          <span className="font-mono">{estPrep.toLocaleString()} tokens</span>
+                        </div>
+                        <div className="flex items-center justify-between text-muted-foreground text-[11px]">
+                          <span>Phase 2 ({estStudents} Students Viva)</span>
+                          <span className="font-mono">{estViva.toLocaleString()} tokens</span>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground pt-1 border-t border-border/50">
+                          Zero-Waste Guarantee: Soft reservation only. Unspent tokens from absent students are returned immediately.
+                        </p>
                       </div>
-                      <div className="flex items-center justify-between text-muted-foreground text-[11px]">
-                        <span>Phase 1 (Question Bank Prep)</span>
-                        <span className="font-mono">{tokenEstimate.prep_tokens.toLocaleString()} tokens</span>
-                      </div>
-                      <div className="flex items-center justify-between text-muted-foreground text-[11px]">
-                        <span>Phase 2 ({tokenEstimate.num_students} Students Viva)</span>
-                        <span className="font-mono">{tokenEstimate.viva_tokens.toLocaleString()} tokens</span>
-                      </div>
-                      <p className="text-[10px] text-muted-foreground pt-1 border-t border-border/50">
-                        Zero-Waste Guarantee: Soft reservation only. Unspent tokens from absent students are returned immediately.
-                      </p>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
 
                 <button 
@@ -908,13 +955,13 @@ export default function LiveVivaDashboard() {
                         <td className="p-3.5 text-foreground font-medium">{student.name}</td>
                         <td className="p-3.5">
                           <span className={`px-2.5 py-1 rounded-md text-xs font-semibold uppercase tracking-wider ${
-                            student.status === 'completed' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20' : 
-                            student.status === 'in_progress' ? 'bg-primary/10 text-primary border border-primary/20' : 
-                            student.status === 'paused' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20' :
-                            student.status === 'absent' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20' : 
+                            student.status?.toLowerCase() === 'completed' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20' : 
+                            student.status?.toLowerCase() === 'in_progress' ? 'bg-primary/10 text-primary border border-primary/20' : 
+                            student.status?.toLowerCase() === 'paused' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20' :
+                            student.status?.toLowerCase() === 'absent' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20' : 
                             'bg-muted text-muted-foreground border border-border'
                           }`}>
-                            {student.status.replace('_', ' ')}
+                            {(student.status || '').replace('_', ' ')}
                           </span>
                         </td>
                         <td className="p-3.5 text-sm">
@@ -928,14 +975,14 @@ export default function LiveVivaDashboard() {
                         </td>
                         <td className="p-3.5">
                           <div className="flex flex-wrap gap-2 items-center">
-                            {student.status !== 'completed' ? (
+                            {student.status?.toLowerCase() !== 'completed' ? (
                               <>
                                 <button 
                                   onClick={() => initiateVerification(student.student_id)}
-                                  disabled={student.status === 'absent'}
+                                  disabled={student.status?.toLowerCase() === 'absent'}
                                   className="h-8 px-3.5 bg-primary hover:bg-primary-hover text-primary-text rounded-lg text-xs font-medium transition-colors shadow-sm disabled:opacity-30"
                                 >
-                                  {(student.status === 'in_progress' || student.status === 'paused') ? 'Resume Viva' : 'Start Viva'}
+                                  {(student.status?.toLowerCase() === 'in_progress' || student.status?.toLowerCase() === 'paused') ? 'Resume Viva' : 'Start Viva'}
                                 </button>
                                 <label className="flex items-center gap-2 cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors">
                                   <input 

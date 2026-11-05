@@ -219,13 +219,14 @@ async def get_exam_roster(
         gr_number = student.gr_number if student else "N/A"
         enrollment_no = student.enrollment_number if student else "N/A"
         
+        status_raw = sr.status.value if hasattr(sr.status, "value") else str(sr.status)
         roster.append({
             "run_id": sr.id,
             "student_id": sr.student_id,
             "name": student_name,
             "gr_number": gr_number,
             "enrollment_number": enrollment_no,
-            "status": sr.status.value if hasattr(sr.status, "value") else str(sr.status),
+            "status": (status_raw or "").lower(),
             "total_score": sr.total_score,
             "grade": sr.grade
         })
@@ -273,7 +274,14 @@ async def start_student_viva(
     
     # Return assigned question IDs so frontend can use them
     assigned_ids = [int(x) for x in sr.assigned_question_ids.split(",") if x.strip()]
-    return {"msg": "Student viva started", "viva_run_id": sr.id, "assigned_question_ids": assigned_ids}
+    ans_res = await db.execute(select(StudentVivaAnswer).where(StudentVivaAnswer.viva_run_id == sr.id))
+    answered_count = len(ans_res.scalars().all())
+    return {
+        "msg": "Student viva started",
+        "viva_run_id": sr.id,
+        "assigned_question_ids": assigned_ids,
+        "answered_count": answered_count
+    }
 
 
 @router.post("/runs/{run_id}/students/{student_id}/pause", dependencies=[Depends(require_roles([RoleEnum.FACULTY, RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
@@ -344,10 +352,13 @@ async def get_exam_questions(
 @router.post("/runs/{run_id}/generate-question", dependencies=[Depends(require_roles([RoleEnum.FACULTY, RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
 async def generate_viva_question(
     run_id: int,
+    student_id: Optional[int] = Query(default=None),
+    old_question_id: Optional[int] = Query(default=None),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Dynamically generates a fresh viva question with expected answer using Ollama.
+    If student_id is provided, automatically updates that student's assigned_question_ids to swap old_question_id for the newly generated question.
     """
     run = await db.get(ExamRun, run_id)
     if not run:
@@ -372,6 +383,23 @@ async def generate_viva_question(
         expected_answer=new_q_data["expected_answer"]
     )
     db.add(eq)
+    await db.flush()
+
+    if student_id:
+        sr_res = await db.execute(select(StudentVivaRun).where(
+            StudentVivaRun.exam_run_id == run_id,
+            StudentVivaRun.student_id == student_id
+        ))
+        sr = sr_res.scalars().first()
+        if sr and sr.assigned_question_ids:
+            cur_ids = [x.strip() for x in sr.assigned_question_ids.split(",") if x.strip()]
+            if old_question_id and str(old_question_id) in cur_ids:
+                idx = cur_ids.index(str(old_question_id))
+                cur_ids[idx] = str(eq.id)
+            else:
+                cur_ids.append(str(eq.id))
+            sr.assigned_question_ids = ",".join(cur_ids)
+
     await db.commit()
     await db.refresh(eq)
     
