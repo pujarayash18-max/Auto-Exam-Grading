@@ -4,21 +4,140 @@ import { API_BASE_URL } from '@/lib/api';
 import { useState, useEffect } from "react";
 import SuperAdminSidebar from "@/components/layout/SuperAdminSidebar";
 import { useRouter } from "next/navigation";
-import { UploadCloud, Trash2, KeyRound, Mail, Search } from "lucide-react";
+import { UploadCloud, Trash2, KeyRound, Mail, Search, Pencil, X, Save } from "lucide-react";
 
 export default function ManageStudents() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [updateType, setUpdateType] = useState("add"); // "add" or "replace"
   const [students, setStudents] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
+  const [classes, setClasses] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [search, setSearch] = useState("");
 
+  // Edit Modal State
+  const [editingStudent, setEditingStudent] = useState<any | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    email: "",
+    gr_no: "",
+    enrollment_no: "",
+    department_id: "" as number | "",
+    department_name: "",
+    class_id: "" as number | "",
+    subjects: "",
+  });
+  const [editLoading, setEditLoading] = useState(false);
+  const [editError, setEditError] = useState("");
+
+  const fetchAuxData = async () => {
+    const token = localStorage.getItem("access_token");
+    if (!token) return;
+    try {
+      const [deptRes, clsRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/v1/admin/departments`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`${API_BASE_URL}/api/v1/admin/classes`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
+      if (deptRes.ok) setDepartments(await deptRes.json());
+      if (clsRes.ok) setClasses(await clsRes.json());
+    } catch (e) {
+      console.error("Failed to load departments/classes aux data", e);
+    }
+  };
+
   useEffect(() => {
     fetchStudents();
+    fetchAuxData();
   }, []);
+
+  const handleOpenEdit = (student: any) => {
+    setEditingStudent(student);
+    const subjs = Array.isArray(student.subjects)
+      ? student.subjects.join(", ")
+      : typeof student.subjects === "string"
+      ? student.subjects
+      : "";
+
+    setEditForm({
+      name: student.name || "",
+      email: student.email || "",
+      gr_no: student.gr_no || "",
+      enrollment_no: student.enrollment_no || "",
+      department_id: student.department_id || "",
+      department_name: student.department_name || student.department || "",
+      class_id: student.class_id || "",
+      subjects: subjs,
+    });
+    setEditError("");
+  };
+
+  const handleCloseEdit = () => {
+    setEditingStudent(null);
+    setEditError("");
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingStudent) return;
+    if (!editForm.name.trim()) {
+      setEditError("Student name is required.");
+      return;
+    }
+    setEditLoading(true);
+    setEditError("");
+    const token = localStorage.getItem("access_token");
+
+    try {
+      const subjectsArray = editForm.subjects
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const payload: any = {
+        name: editForm.name.trim(),
+        email: editForm.email.trim() || undefined,
+        gr_no: editForm.gr_no.trim() || undefined,
+        enrollment_no: editForm.enrollment_no.trim() || undefined,
+        class_id: editForm.class_id ? Number(editForm.class_id) : undefined,
+        subjects: subjectsArray,
+      };
+
+      if (editForm.department_id) {
+        payload.department_id = Number(editForm.department_id);
+      } else if (editForm.department_name.trim()) {
+        payload.department_name = editForm.department_name.trim();
+      }
+
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/students/${editingStudent.id}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || "Failed to update student.");
+      }
+
+      setSuccess("Student updated successfully.");
+      handleCloseEdit();
+      fetchStudents();
+    } catch (err: any) {
+      setEditError(err.message || "Failed to update student.");
+    } finally {
+      setEditLoading(false);
+    }
+  };
 
   const fetchStudents = async () => {
     const token = localStorage.getItem("access_token");
@@ -348,6 +467,26 @@ export default function ManageStudents() {
                           >
                             <Trash2 className="w-5 h-5" />
                           </button>
+                          <div className="flex items-center justify-end gap-1">
+                            <button 
+                              type="button"
+                              onClick={() => handleOpenEdit(student)}
+                              className="text-muted-foreground hover:text-primary hover:bg-primary/10 p-2 rounded-lg transition-colors cursor-pointer"
+                              title="Edit Student"
+                              aria-label={`Edit ${student.name}`}
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                            <button 
+                              type="button"
+                              onClick={() => handleDelete(student.id)}
+                              className="text-destructive/70 hover:text-destructive hover:bg-destructive/10 p-2 rounded-lg transition-colors cursor-pointer"
+                              title="Delete Student"
+                              aria-label={`Delete ${student.name}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -366,6 +505,177 @@ export default function ManageStudents() {
           </div>
         </div>
       </main>
+
+      {/* Edit Student Modal */}
+      {editingStudent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-card border border-border rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-5 relative">
+            <div className="flex items-center justify-between border-b border-border pb-4">
+              <div>
+                <h3 className="text-lg font-bold text-foreground">Edit Student</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Update student profile, enrollment details, and class assignment.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseEdit}
+                className="h-8 w-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {editError && (
+              <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs">
+                {editError}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEdit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">
+                  Full Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editForm.name}
+                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  placeholder="e.g. Jane Doe"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">
+                    GR Number
+                  </label>
+                  <input
+                    type="text"
+                    value={editForm.gr_no}
+                    onChange={(e) => setEditForm({ ...editForm, gr_no: e.target.value })}
+                    className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    placeholder="GR1001"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">
+                    Enrollment Number
+                  </label>
+                  <input
+                    type="text"
+                    value={editForm.enrollment_no}
+                    onChange={(e) => setEditForm({ ...editForm, enrollment_no: e.target.value })}
+                    className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    placeholder="ENR2024001"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  value={editForm.email}
+                  onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  placeholder="student@university.edu"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">
+                    Department
+                  </label>
+                  <select
+                    value={editForm.department_id}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const selected = departments.find((d) => String(d.id) === String(val));
+                      setEditForm({
+                        ...editForm,
+                        department_id: val ? Number(val) : "",
+                        department_name: selected ? selected.name : "",
+                      });
+                    }}
+                    className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  >
+                    <option value="">-- Select Department --</option>
+                    {departments.map((dept) => (
+                      <option key={dept.id} value={dept.id}>
+                        {dept.department_id ? `${dept.department_id} - ${dept.name}` : dept.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">
+                    Assigned Class
+                  </label>
+                  <select
+                    value={editForm.class_id}
+                    onChange={(e) =>
+                      setEditForm({
+                        ...editForm,
+                        class_id: e.target.value ? Number(e.target.value) : "",
+                      })
+                    }
+                    className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  >
+                    <option value="">-- Select Class --</option>
+                    {classes.map((cls) => (
+                      <option key={cls.id} value={cls.id}>
+                        {cls.department ? `${cls.department} Sem-${cls.semester} ${cls.name}` : `Sem-${cls.semester} ${cls.name}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">
+                  Enrolled Subjects
+                </label>
+                <input
+                  type="text"
+                  value={editForm.subjects}
+                  onChange={(e) => setEditForm({ ...editForm, subjects: e.target.value })}
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  placeholder="e.g. Data Structures, Web Development, Cloud Computing"
+                />
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Separate multiple subjects with commas.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+                <button
+                  type="button"
+                  onClick={handleCloseEdit}
+                  className="px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground bg-muted hover:bg-muted/80 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editLoading}
+                  className="px-4 py-2 text-xs font-semibold text-primary-text bg-primary hover:bg-primary-hover rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5 shadow-sm"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {editLoading ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

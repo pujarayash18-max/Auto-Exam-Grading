@@ -411,15 +411,20 @@ export default function LiveVivaDashboard() {
   };
 
   const handleToggleRecording = async () => {
-    if (isRecording) {
-      isRecordingRef.current = false;
-      setIsRecording(false);
-      stopAudioVisualizer();
-      if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch (e) {} }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        try { mediaRecorderRef.current.stop(); } catch (e) {}
-      }
-    } else {
+    // Ensure media recorder has finished and flushed all chunks before packaging audio
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      await new Promise<void>((resolve) => {
+        const rec = mediaRecorderRef.current;
+        if (!rec || rec.state === 'inactive') { resolve(); return; }
+        rec.addEventListener('stop', () => resolve(), { once: true });
+        try { rec.requestData(); } catch (e) {}
+        try { rec.stop(); } catch (e) { resolve(); }
+      });
+    }
+    isRecordingRef.current = false;
+    setIsRecording(false);
+    stopAudioVisualizer();
+    if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch (e) {} } else {
       isRecordingRef.current = true;
       setIsRecording(true);
       setTranscript('');
@@ -460,15 +465,20 @@ export default function LiveVivaDashboard() {
     const currentQ = questions[currentQuestionIndex];
     if (!currentQ || !activeRunId || !activeStudentId) return;
 
-    if (isRecording) {
-      isRecordingRef.current = false;
-      setIsRecording(false);
-      stopAudioVisualizer();
-      if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch (e) {} }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        try { mediaRecorderRef.current.stop(); } catch (e) {}
-      }
+    // Ensure media recorder has finished and flushed all chunks before packaging audio
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      await new Promise<void>((resolve) => {
+        const rec = mediaRecorderRef.current;
+        if (!rec || rec.state === 'inactive') { resolve(); return; }
+        rec.addEventListener('stop', () => resolve(), { once: true });
+        try { rec.requestData(); } catch (e) {}
+        try { rec.stop(); } catch (e) { resolve(); }
+      });
     }
+    isRecordingRef.current = false;
+    setIsRecording(false);
+    stopAudioVisualizer();
+    if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch (e) {} }
 
     setEvaluating(true);
     setEvaluatingSeconds(0);

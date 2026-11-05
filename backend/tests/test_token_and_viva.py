@@ -1,5 +1,5 @@
 import unittest
-from app.ai.llm import estimate_exam_tokens
+from app.ai.llm import estimate_exam_tokens, normalize_spoken_transcript, clean_expected_answer
 from app.ai.document_parser import is_valid_question
 from app.models.viva import StudentVivaStatus
 
@@ -79,6 +79,39 @@ class TestAutoExamCore(unittest.TestCase):
         
         self.assertEqual(updated_ids, ["101", "102", "201", "104", "105"])
         self.assertEqual(len(updated_ids), len(assigned_ids))
+
+    def test_normalize_spoken_transcript_phonetics(self):
+        """Verify speech-to-text phonetic replacements convert spoken artifacts to proper technical terms."""
+        # Merge sort and Big-O
+        raw1 = "the in place what sort algorithm has a time complexity of bigo of n login and Mauritius them back together"
+        norm1 = normalize_spoken_transcript(raw1)
+        self.assertIn("O(n log n)", norm1)
+        self.assertIn("merge sort", norm1)
+        self.assertIn("merges", norm1)
+
+        # ADO.NET and Razor
+        raw2 = "video.net architecture uses razors and tax and star.css TML view files"
+        norm2 = normalize_spoken_transcript(raw2)
+        self.assertIn("ADO.NET", norm2)
+        self.assertIn("Razor syntax", norm2)
+        self.assertIn("*.cshtml", norm2)
+
+        # CRUD and Balanced trees
+        raw3 = "performance crowd operations on a balance stray with bigo of login"
+        norm3 = normalize_spoken_transcript(raw3)
+        self.assertIn("perform CRUD operations", norm3)
+        self.assertIn("balanced tree", norm3)
+        self.assertIn("O(log n)", norm3)
+
+    def test_clean_expected_answer_strips_boilerplate(self):
+        """Verify slide headers, course outcomes, and university boilerplate are stripped from reference answers."""
+        raw = "MARWADI UNIVERSITY | UNIT 2 : ASP.NET WEB APPLICATION HTTP is a stateless protocol. [Remember] UNIT 3 - SECTION 4 Models in MVC. • Bullet item."
+        cleaned = clean_expected_answer(raw)
+        self.assertNotIn("MARWADI UNIVERSITY", cleaned)
+        self.assertNotIn("UNIT 2 :", cleaned)
+        self.assertNotIn("[Remember]", cleaned)
+        self.assertIn("HTTP is a stateless protocol", cleaned)
+        self.assertIn("Models in MVC", cleaned)
 
 if __name__ == '__main__':
     unittest.main()

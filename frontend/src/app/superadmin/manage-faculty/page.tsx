@@ -4,7 +4,7 @@ import { API_BASE_URL } from '@/lib/api';
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import SuperAdminSidebar from "@/components/layout/SuperAdminSidebar";
-import { UploadCloud, Trash2, KeyRound, Mail, AlertCircle, CheckCircle2, X } from "lucide-react";
+import { UploadCloud, Trash2, KeyRound, Mail, AlertCircle, CheckCircle2, X, Pencil, Save } from "lucide-react";
 
 interface FacultyItem {
   id: number;
@@ -12,6 +12,8 @@ interface FacultyItem {
   name: string;
   email?: string;
   department?: string;
+  department_id?: number;
+  department_name?: string;
   subjects?: string[];
   assigned_classes?: string[];
   has_password?: boolean;
@@ -22,11 +24,39 @@ interface FacultyItem {
 export default function ManageFacultyPage() {
   const router = useRouter();
   const [faculties, setFaculties] = useState<FacultyItem[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [updateType, setUpdateType] = useState<"add" | "replace">("add");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  // Edit Modal State
+  const [editingFaculty, setEditingFaculty] = useState<FacultyItem | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    email: "",
+    emp_id: "",
+    department_id: "" as number | "",
+    department_name: "",
+    subjects: "",
+  });
+  const [editLoading, setEditLoading] = useState(false);
+  const [editError, setEditError] = useState("");
+
+  const fetchDepartments = async () => {
+    try {
+      const token = localStorage.getItem("access_token");
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/departments`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        setDepartments(await res.json());
+      }
+    } catch (e) {
+      console.error("Failed to fetch departments", e);
+    }
+  };
 
   const fetchFaculties = async () => {
     const token = localStorage.getItem("access_token");
@@ -51,7 +81,86 @@ export default function ManageFacultyPage() {
 
   useEffect(() => {
     fetchFaculties();
+    fetchDepartments();
   }, []);
+
+  const handleOpenEdit = (faculty: FacultyItem) => {
+    setEditingFaculty(faculty);
+    const subjs = Array.isArray(faculty.subjects)
+      ? faculty.subjects.join(", ")
+      : typeof faculty.subjects === "string"
+      ? faculty.subjects
+      : "";
+
+    setEditForm({
+      name: faculty.name || "",
+      email: faculty.email || "",
+      emp_id: faculty.emp_id || "",
+      department_id: faculty.department_id || "",
+      department_name: faculty.department_name || faculty.department || "",
+      subjects: subjs,
+    });
+    setEditError("");
+  };
+
+  const handleCloseEdit = () => {
+    setEditingFaculty(null);
+    setEditError("");
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingFaculty) return;
+    if (!editForm.name.trim()) {
+      setEditError("Name is required.");
+      return;
+    }
+    setEditLoading(true);
+    setEditError("");
+    const token = localStorage.getItem("access_token");
+
+    try {
+      const subjectsArray = editForm.subjects
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const payload: any = {
+        name: editForm.name.trim(),
+        email: editForm.email.trim() || undefined,
+        emp_id: editForm.emp_id.trim() || undefined,
+        subjects: subjectsArray,
+      };
+
+      if (editForm.department_id) {
+        payload.department_id = Number(editForm.department_id);
+      } else if (editForm.department_name.trim()) {
+        payload.department_name = editForm.department_name.trim();
+      }
+
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/faculties/${editingFaculty.id}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || "Failed to update faculty.");
+      }
+
+      setSuccess("Faculty updated successfully.");
+      handleCloseEdit();
+      fetchFaculties();
+    } catch (err: any) {
+      setEditError(err.message || "Failed to update faculty.");
+    } finally {
+      setEditLoading(false);
+    }
+  };
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -455,6 +564,7 @@ export default function ManageFacultyPage() {
                             </td>
 
                             {/* Actions: Trash Button with Danger Hover State and Tooltip */}
+                            {/* Actions: Edit and Delete Buttons */}
                             <td className="px-3 py-4 text-right">
                               <button
                                 type="button"
@@ -465,6 +575,26 @@ export default function ManageFacultyPage() {
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEdit(f)}
+                                  className="h-8 w-8 rounded-lg inline-flex items-center justify-center text-[var(--text-subtle)] hover:text-primary hover:bg-primary/10 transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer"
+                                  title="Edit faculty member"
+                                  aria-label={`Edit ${f.name}`}
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDelete(f.id)}
+                                  className="h-8 w-8 rounded-lg inline-flex items-center justify-center text-[var(--text-subtle)] hover:text-[var(--danger-text)] hover:bg-[var(--danger-bg)] transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-[var(--danger-text)]/30 cursor-pointer"
+                                  title="Delete faculty member"
+                                  aria-label={`Delete ${f.name}`}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -488,6 +618,139 @@ export default function ManageFacultyPage() {
           </div>
         </div>
       </main>
+
+      {/* Edit Faculty Modal */}
+      {editingFaculty && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-card border border-border rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-5 relative">
+            <div className="flex items-center justify-between border-b border-border pb-4">
+              <div>
+                <h3 className="text-lg font-bold text-foreground">Edit Faculty Member</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Update employee profile and subject assignments.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseEdit}
+                className="h-8 w-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {editError && (
+              <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs">
+                {editError}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEdit} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">
+                    Faculty Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                    className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    placeholder="Prof. John Doe"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">
+                    Employee ID
+                  </label>
+                  <input
+                    type="text"
+                    value={editForm.emp_id}
+                    onChange={(e) => setEditForm({ ...editForm, emp_id: e.target.value })}
+                    className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    placeholder="EMP1001"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  value={editForm.email}
+                  onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  placeholder="faculty@university.edu"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">
+                  Department
+                </label>
+                <select
+                  value={editForm.department_id}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const selected = departments.find((d) => String(d.id) === String(val));
+                    setEditForm({
+                      ...editForm,
+                      department_id: val ? Number(val) : "",
+                      department_name: selected ? selected.name : "",
+                    });
+                  }}
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                >
+                  <option value="">-- Select Department --</option>
+                  {departments.map((dept) => (
+                    <option key={dept.id} value={dept.id}>
+                      {dept.department_id ? `${dept.department_id} - ${dept.name}` : dept.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">
+                  Assigned Subjects
+                </label>
+                <input
+                  type="text"
+                  value={editForm.subjects}
+                  onChange={(e) => setEditForm({ ...editForm, subjects: e.target.value })}
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  placeholder="e.g. CS101 - Data Structures, Database Systems"
+                />
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Separate multiple subjects with commas.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+                <button
+                  type="button"
+                  onClick={handleCloseEdit}
+                  className="px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground bg-muted hover:bg-muted/80 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editLoading}
+                  className="px-4 py-2 text-xs font-semibold text-primary-text bg-primary hover:bg-primary-hover rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5 shadow-sm"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {editLoading ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

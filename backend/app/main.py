@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.v1 import auth, admin, faculty, viva, results, student, ai_billing
+from app.api.v1 import auth, admin, faculty, viva, results, student, ai_billing, mcq
 from app.api.deps import engine
 from app.models.base import Base
 
@@ -15,8 +15,9 @@ async def lifespan(app: FastAPI):
                 from sqlalchemy import text
                 await conn.execute(text("ALTER TYPE studentvivastatus ADD VALUE IF NOT EXISTS 'PAUSED'"))
                 await conn.execute(text("ALTER TYPE studentvivastatus ADD VALUE IF NOT EXISTS 'ABSENT'"))
+                await conn.execute(text("ALTER TABLE mcq_exams ADD COLUMN IF NOT EXISTS enable_blooms_taxonomy BOOLEAN DEFAULT TRUE"))
             except Exception as enum_err:
-                print(f"Enum verification notice: {enum_err}")
+                print(f"Enum/column verification notice: {enum_err}")
     except Exception as e:
         print(f"Database table verification deferred: {e}")
     yield
@@ -35,6 +36,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition", "Content-Type", "Content-Length"],
 )
 
 @app.exception_handler(Exception)
@@ -52,6 +54,7 @@ app.include_router(faculty.router, prefix="/api/v1/faculty", tags=["faculty"])
 app.include_router(viva.router, prefix="/api/v1/viva", tags=["viva"])
 app.include_router(results.router, prefix="/api/v1/results", tags=["results"])
 app.include_router(student.router, prefix="/api/v1/student", tags=["student"])
+app.include_router(mcq.router, prefix="/api/v1/mcq", tags=["mcq"])
 
 @app.get("/health")
 def health_check():

@@ -492,7 +492,24 @@ export default function FacultyResultsDashboard() {
                       const url = window.URL.createObjectURL(blob);
                       const a = document.createElement('a');
                       a.href = url;
-                      a.download = `audio_${auditingStudent.name.replace(/ /g, '_')}_${auditingStudent.viva_run_id}.zip`;
+                      const contentType = res.headers.get('content-type') || '';
+                      const contentDisposition = res.headers.get('content-disposition') || '';
+                      const filenameMatch = contentDisposition.match(/filename=["']?([^"';]+)["']?/i);
+                      let downloadName = '';
+                      if (filenameMatch && filenameMatch[1]) {
+                        downloadName = filenameMatch[1].trim().replace(/^["']|["']$/g, '');
+                      }
+                      if (!downloadName || !downloadName.includes('.')) {
+                        const safeAuditingName = (auditingStudent.name || 'Student').replace(/[^a-zA-Z0-9_]/g, '_');
+                        if (contentType.includes('zip') || blob.type.includes('zip')) {
+                          downloadName = `audio_${safeAuditingName}_${auditingStudent.viva_run_id}.zip`;
+                        } else if (contentType.includes('wav') || blob.type.includes('wav')) {
+                          downloadName = `audio_${safeAuditingName}_${auditingStudent.viva_run_id}.wav`;
+                        } else {
+                          downloadName = `audio_${safeAuditingName}_${auditingStudent.viva_run_id}.webm`;
+                        }
+                      }
+                      a.download = downloadName;
                       document.body.appendChild(a);
                       a.click();
                       window.URL.revokeObjectURL(url);

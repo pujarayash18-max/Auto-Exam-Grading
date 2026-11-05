@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/ThemeToggle';
-import { LayoutDashboard, MonitorPlay, ClipboardCheck, LogOut, Coins, Zap, RotateCcw } from 'lucide-react';
+import { LayoutDashboard, MonitorPlay, ClipboardCheck, LogOut, Coins, Zap, RotateCcw, ListChecks } from 'lucide-react';
 
 interface FacultyWallet {
   faculty_id: number;
@@ -68,6 +68,11 @@ export default function FacultyLayout({ children }: { children: React.ReactNode 
       path: '/faculty/viva', 
       name: "Conduct Viva", 
       icon: <MonitorPlay className="w-5 h-5" /> 
+    },
+    { 
+      path: '/faculty/mcq', 
+      name: "MCQ Exams", 
+      icon: <ListChecks className="w-5 h-5" /> 
     },
     { 
       path: '/faculty/results', 

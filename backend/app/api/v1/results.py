@@ -20,6 +20,31 @@ from app.models.exam import Exam, ExamQuestion
 
 router = APIRouter()
 
+
+def resolve_audio_path(file_path: Optional[str]) -> Optional[str]:
+    """
+    Robustly resolves a stored audio file path against workspace root and backend folder.
+    Guarantees audio files are found regardless of the process working directory.
+    """
+    if not file_path:
+        return None
+    if os.path.isabs(file_path) and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+        return file_path
+    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+        return os.path.abspath(file_path)
+    base_name = os.path.basename(file_path)
+    module_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.abspath(os.path.join(module_dir, "..", "..", "..", "uploads", "audio", base_name)),
+        os.path.abspath(os.path.join(module_dir, "..", "..", "..", "..", "uploads", "audio", base_name)),
+        os.path.abspath(os.path.join("backend", "uploads", "audio", base_name)),
+        os.path.abspath(os.path.join("uploads", "audio", base_name)),
+    ]
+    for c in candidates:
+        if os.path.exists(c) and os.path.getsize(c) > 0:
+            return c
+    return None
+
 class OverrideScoreRequest(BaseModel):
     new_score: float
     new_grade: str
@@ -66,7 +91,8 @@ async def get_exam_results(
         )
         answers_data = []
         for ans, q in answers_res.all():
-            has_audio = bool(ans.audio_file_path and os.path.exists(ans.audio_file_path))
+            real_audio = resolve_audio_path(ans.audio_file_path)
+            has_audio = bool(real_audio)
             answers_data.append({
                 "id": ans.id,
                 "question_id": q.id,
@@ -243,40 +269,77 @@ async def download_audio(
     viva_run_id: int,
     db: AsyncSession = Depends(get_db)
 ):
-    """Download all recorded audio files for a viva run as a zip."""
+    """Download recorded audio for a viva run as continuous WAV or multi-question ZIP archive."""
     sr = await db.get(StudentVivaRun, viva_run_id)
     if not sr:
         raise HTTPException(status_code=404, detail="Viva run not found")
     
     student = await db.get(StudentProfile, sr.student_id)
     student_name = student.name if student else f"Student_{sr.student_id}"
+    safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', student_name).strip('_') or f"Student_{sr.student_id}"
     
     answers_res = await db.execute(
         select(StudentVivaAnswer, ExamQuestion)
         .join(ExamQuestion, StudentVivaAnswer.question_id == ExamQuestion.id)
         .where(StudentVivaAnswer.viva_run_id == sr.id)
+        .order_by(StudentVivaAnswer.id)
     )
     
     audio_files = []
     for idx, (ans, q) in enumerate(answers_res.all(), 1):
-        if ans.audio_file_path and os.path.exists(ans.audio_file_path):
+        real_path = resolve_audio_path(ans.audio_file_path)
+        if real_path:
+            ext = os.path.splitext(real_path)[1].lower() or ".webm"
+            safe_q = re.sub(r'[^a-zA-Z0-9_]', '_', q.question_text[:30]).strip('_')
             audio_files.append({
-                "path": ans.audio_file_path,
-                "name": f"Q{idx}_{q.question_text[:30].replace(' ', '_').replace('?', '')}.webm"
+                "path": real_path,
+                "name": f"Q{idx}_{safe_q}{ext}",
+                "ext": ext
             })
     
     if not audio_files:
         raise HTTPException(status_code=404, detail="No audio recordings found for this viva")
     
-    # If only one audio file, return it directly
+    # 1. Single audio file: return directly with guaranteed extension
     if len(audio_files) == 1:
+        ext = audio_files[0]["ext"]
+        mtype = "audio/wav" if ext == ".wav" else "audio/webm"
+        clean_ext = ext if ext.startswith(".") else f".{ext}"
+        out_name = f"audio_{safe_name}_{sr.id}{clean_ext}"
         return FileResponse(
             audio_files[0]["path"],
-            media_type="audio/webm",
-            filename=f"audio_{student_name.replace(' ', '_')}_{sr.id}.webm"
+            media_type=mtype,
+            filename=out_name,
+            headers={"Content-Disposition": f'attachment; filename="{out_name}"'}
         )
     
-    # Multiple files: create a zip
+    # 2. Check if all audio files are WAV: merge into a single seamless continuous WAV viva file
+    all_wav = all(af["ext"] == ".wav" for af in audio_files)
+    if all_wav:
+        try:
+            merged_buffer = io.BytesIO()
+            with wave.open(merged_buffer, "wb") as out_w:
+                first = True
+                for af in audio_files:
+                    with wave.open(af["path"], "rb") as in_w:
+                        if first:
+                            out_w.setparams(in_w.getparams())
+                            first = False
+                        out_w.writeframes(in_w.readframes(in_w.getnframes()))
+            merged_buffer.seek(0)
+            return StreamingResponse(
+                merged_buffer,
+                media_type="audio/wav",
+                headers={
+                    "Content-Disposition": f'attachment; filename="audio_{safe_name}_{sr.id}.wav"',
+                    "Content-Type": "audio/wav"
+                }
+            )
+        except Exception as e:
+            # Fallback to ZIP archive if merge fails
+            pass
+    
+    # 3. Multiple files (WebM or mixed): package into a clean ZIP archive
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for af in audio_files:
@@ -288,7 +351,8 @@ async def download_audio(
         zip_buffer,
         media_type="application/zip",
         headers={
-            "Content-Disposition": f"attachment; filename=audio_{student_name.replace(' ', '_')}_{sr.id}.zip"
+            "Content-Disposition": f'attachment; filename="audio_{safe_name}_{sr.id}.zip"',
+            "Content-Type": "application/zip"
         }
     )
 
@@ -309,7 +373,7 @@ async def check_audio_available(
     )
     
     for ans in answers_res.scalars().all():
-        if ans.audio_file_path and os.path.exists(ans.audio_file_path):
+        if resolve_audio_path(ans.audio_file_path):
             return {"has_audio": True}
     
     return {"has_audio": False}
@@ -320,13 +384,20 @@ async def stream_answer_audio(
     answer_id: int,
     db: AsyncSession = Depends(get_db)
 ):
-    """Streams an individual student viva answer audio file."""
+    """Streams an individual student viva answer audio file for in-browser playback."""
     ans = await db.get(StudentVivaAnswer, answer_id)
-    if not ans or not ans.audio_file_path or not os.path.exists(ans.audio_file_path):
+    if not ans or not ans.audio_file_path:
         raise HTTPException(status_code=404, detail="Audio recording not found")
         
+    real_path = resolve_audio_path(ans.audio_file_path)
+    if not real_path:
+        raise HTTPException(status_code=404, detail="Audio recording file missing on disk")
+        
+    ext = os.path.splitext(real_path)[1].lower() or ".webm"
+    mtype = "audio/wav" if ext == ".wav" else "audio/webm"
     return FileResponse(
-        ans.audio_file_path,
-        media_type="audio/webm",
-        filename=os.path.basename(ans.audio_file_path)
+        real_path,
+        media_type=mtype,
+        filename=os.path.basename(real_path),
+        headers={"Content-Disposition": f'inline; filename="{os.path.basename(real_path)}"'}
     )

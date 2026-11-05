@@ -46,7 +46,8 @@ class StartExamRunRequest(BaseModel):
     exam_type: Optional[str] = None
     total_questions_to_generate: Optional[int] = None  # Pool size; defaults to exam.questions_per_student if not given
 
-AUDIO_UPLOAD_DIR = "uploads/audio"
+BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+AUDIO_UPLOAD_DIR = os.path.join(BACKEND_ROOT, "uploads", "audio")
 os.makedirs(AUDIO_UPLOAD_DIR, exist_ok=True)
 
 class SubmitAnswerRequest(BaseModel):
@@ -257,7 +258,20 @@ async def start_student_viva(
         
         all_q_res = await db.execute(select(ExamQuestion).where(ExamQuestion.exam_id == run.exam_id))
         all_questions = all_q_res.scalars().all()
-        all_ids = [q.id for q in all_questions]
+        
+        # Deduplicate pool by normalized question text so student never receives duplicate or near-identical questions
+        seen_texts = set()
+        unique_questions = []
+        for q in all_questions:
+            norm = re.sub(r'^\[.*?\]\s*', '', q.question_text).strip().lower()
+            norm = re.sub(r'[^a-z0-9]', '', norm)
+            if norm and norm not in seen_texts:
+                seen_texts.add(norm)
+                unique_questions.append(q)
+            elif not norm and q.id not in [uq.id for uq in unique_questions]:
+                unique_questions.append(q)
+
+        all_ids = [q.id for q in unique_questions]
         
         if len(all_ids) <= per_student:
             selected_ids = all_ids
@@ -265,6 +279,15 @@ async def start_student_viva(
             selected_ids = random.sample(all_ids, per_student)
         
         sr.assigned_question_ids = ",".join(str(qid) for qid in selected_ids)
+    else:
+        # Sanitize existing assigned IDs to remove accidental duplicates
+        cur_ids = [x.strip() for x in sr.assigned_question_ids.split(",") if x.strip()]
+        unique_ids = []
+        for qid in cur_ids:
+            if qid not in unique_ids:
+                unique_ids.append(qid)
+        if len(unique_ids) < len(cur_ids):
+            sr.assigned_question_ids = ",".join(unique_ids)
         
     sr.status = StudentVivaStatus.IN_PROGRESS
     if not sr.started_at:
@@ -380,8 +403,17 @@ async def generate_viva_question(
             cur_ids = [x.strip() for x in sr.assigned_question_ids.split(",") if x.strip()]
             cur_int_ids = {int(x) for x in cur_ids if x.isdigit()}
             
-            # Find pool questions not currently assigned to this student
-            unused = [q for q in all_existing_questions if q.id not in cur_int_ids and (old_question_id is None or q.id != old_question_id)]
+            # Find pool questions not currently assigned to this student and not matching assigned texts
+            assigned_texts = {
+                re.sub(r'[^a-z0-9]', '', re.sub(r'^\[.*?\]\s*', '', q.question_text).lower())
+                for q in all_existing_questions if q.id in cur_int_ids and q.id != old_question_id
+            }
+            unused = [
+                q for q in all_existing_questions 
+                if q.id not in cur_int_ids 
+                and (old_question_id is None or q.id != old_question_id)
+                and re.sub(r'[^a-z0-9]', '', re.sub(r'^\[.*?\]\s*', '', q.question_text).lower()) not in assigned_texts
+            ]
             if unused:
                 chosen = random.choice(unused)
                 if old_question_id and str(old_question_id) in cur_ids:
@@ -491,16 +523,33 @@ async def submit_student_answer(
             print(f"Audio save error: {e}")
             audio_path = None
 
-    answer = StudentVivaAnswer(
-        viva_run_id=sr.id,
-        question_id=req.question_id,
-        transcript=req.transcript,
-        score_awarded=score_awarded,
-        audio_file_path=audio_path,
-        feedback=feedback,
-        areas_to_improve=areas_to_improve
+    # Upsert answer: If an answer for this question already exists in this viva run, update it rather than creating a duplicate row
+    existing_ans_res = await db.execute(
+        select(StudentVivaAnswer).where(
+            StudentVivaAnswer.viva_run_id == sr.id,
+            StudentVivaAnswer.question_id == req.question_id
+        )
     )
-    db.add(answer)
+    existing_ans = existing_ans_res.scalars().first()
+    if existing_ans:
+        existing_ans.transcript = req.transcript
+        existing_ans.score_awarded = score_awarded
+        if audio_path:
+            existing_ans.audio_file_path = audio_path
+        existing_ans.feedback = feedback
+        existing_ans.areas_to_improve = areas_to_improve
+        answer = existing_ans
+    else:
+        answer = StudentVivaAnswer(
+            viva_run_id=sr.id,
+            question_id=req.question_id,
+            transcript=req.transcript,
+            score_awarded=score_awarded,
+            audio_file_path=audio_path,
+            feedback=feedback,
+            areas_to_improve=areas_to_improve
+        )
+        db.add(answer)
     await db.commit()
     
     return {
@@ -524,18 +573,28 @@ async def finish_student_viva(
     sr.status = StudentVivaStatus.COMPLETED
     sr.completed_at = datetime.now(timezone.utc)
     
-    # Calculate grade based on real submitted answers
+    # Calculate grade based on real submitted answers (deduplicated by question_id so multiple attempts never inflate the denominator)
     answers_res = await db.execute(select(StudentVivaAnswer).where(StudentVivaAnswer.viva_run_id == viva_run_id))
     answers = answers_res.scalars().all()
     
-    total_score = sum([a.score_awarded for a in answers if a.score_awarded is not None])
+    unique_answers_by_q = {}
+    for a in answers:
+        if a.question_id not in unique_answers_by_q:
+            unique_answers_by_q[a.question_id] = a
+        else:
+            existing = unique_answers_by_q[a.question_id]
+            if (a.score_awarded or 0) >= (existing.score_awarded or 0):
+                unique_answers_by_q[a.question_id] = a
+    
+    effective_answers = list(unique_answers_by_q.values())
+    total_score = sum([a.score_awarded for a in effective_answers if a.score_awarded is not None])
     
     run = await db.get(ExamRun, sr.exam_run_id)
     exam = await db.get(Exam, run.exam_id)
     schemes_res = await db.execute(select(GradingScheme).where(GradingScheme.exam_id == exam.id))
     schemes = schemes_res.scalars().all()
     
-    max_possible = max(1.0, len(answers) * 100.0 if answers else 100.0)
+    max_possible = max(1.0, len(effective_answers) * 100.0 if effective_answers else 100.0)
     grade = await calculate_final_grade(total_score, max_possible, schemes)
     
     # Normalize score out of 100 for academic reporting
@@ -545,7 +604,7 @@ async def finish_student_viva(
     
     # Generate synthesized AI diagnostic report on areas where student needs to improve
     qa_records = []
-    for a in answers:
+    for a in effective_answers:
         q_item = await db.get(ExamQuestion, a.question_id)
         qa_records.append({
             "question_text": q_item.question_text if q_item else "",
@@ -728,16 +787,33 @@ async def student_submit_answer(
             print(f"Audio save error: {e}")
             audio_path = None
 
-    answer = StudentVivaAnswer(
-        viva_run_id=sr.id,
-        question_id=req.question_id,
-        transcript=req.transcript,
-        score_awarded=score_awarded,
-        audio_file_path=audio_path,
-        feedback=feedback,
-        areas_to_improve=areas_to_improve
+    # Upsert answer: If an answer for this question already exists in this viva run, update it rather than creating a duplicate row
+    existing_ans_res = await db.execute(
+        select(StudentVivaAnswer).where(
+            StudentVivaAnswer.viva_run_id == sr.id,
+            StudentVivaAnswer.question_id == req.question_id
+        )
     )
-    db.add(answer)
+    existing_ans = existing_ans_res.scalars().first()
+    if existing_ans:
+        existing_ans.transcript = req.transcript
+        existing_ans.score_awarded = score_awarded
+        if audio_path:
+            existing_ans.audio_file_path = audio_path
+        existing_ans.feedback = feedback
+        existing_ans.areas_to_improve = areas_to_improve
+        answer = existing_ans
+    else:
+        answer = StudentVivaAnswer(
+            viva_run_id=sr.id,
+            question_id=req.question_id,
+            transcript=req.transcript,
+            score_awarded=score_awarded,
+            audio_file_path=audio_path,
+            feedback=feedback,
+            areas_to_improve=areas_to_improve
+        )
+        db.add(answer)
     await db.commit()
     
     return {

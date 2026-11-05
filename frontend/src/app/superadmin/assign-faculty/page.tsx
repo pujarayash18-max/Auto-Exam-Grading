@@ -4,7 +4,7 @@ import { API_BASE_URL } from '@/lib/api';
 import { useState, useEffect, useMemo, useRef } from "react";
 import SuperAdminSidebar from "@/components/layout/SuperAdminSidebar";
 import { useRouter } from "next/navigation";
-import { UploadCloud, Save, X } from "lucide-react";
+import { UploadCloud, Save, X, Pencil, Plus } from "lucide-react";
 
 export default function AssignFaculty() {
   const router = useRouter();
@@ -18,6 +18,24 @@ export default function AssignFaculty() {
   const [assignments, setAssignments] = useState<Record<number, any[]>>({}); // faculty_id -> array of { class_id, subject_code, subject_name }
   
   const [newAssignment, setNewAssignment] = useState<Record<number, { class_id: number | "", subject: string }>>({});
+
+  // Single Mapping Edit Modal State
+  const [editingMapping, setEditingMapping] = useState<{
+    faculty: any;
+    index: number;
+    assignment: any;
+  } | null>(null);
+  const [editMappingForm, setEditMappingForm] = useState<{
+    class_id: number | "";
+    subject: string;
+  }>({ class_id: "", subject: "" });
+  const [singleEditLoading, setSingleEditLoading] = useState(false);
+
+  // All Mappings Edit Modal for a Faculty
+  const [facultyForModal, setFacultyForModal] = useState<any | null>(null);
+  const [modalAssignmentsList, setModalAssignmentsList] = useState<any[]>([]);
+  const [modalNewAssignment, setModalNewAssignment] = useState<{ class_id: number | ""; subject: string }>({ class_id: "", subject: "" });
+  const [modalSaving, setModalSaving] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -165,6 +183,131 @@ export default function AssignFaculty() {
     }
   };
 
+  // Open Single Mapping Edit Modal
+  const handleOpenEditAssignment = (faculty: any, index: number, a: any) => {
+    setEditingMapping({ faculty, index, assignment: a });
+    const fullSubj = a.subject_code ? `${a.subject_code} - ${a.subject_name}` : a.subject_name;
+    setEditMappingForm({
+      class_id: a.class_id,
+      subject: fullSubj,
+    });
+  };
+
+  const handleCloseEditAssignment = () => {
+    setEditingMapping(null);
+  };
+
+  const handleSaveSingleMapping = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingMapping || !editMappingForm.class_id || !editMappingForm.subject) return;
+
+    setSingleEditLoading(true);
+    let subject_code = "";
+    let subject_name = editMappingForm.subject;
+    if (editMappingForm.subject.includes(" - ")) {
+      const parts = editMappingForm.subject.split(" - ");
+      subject_code = parts[0].trim();
+      subject_name = parts[1].trim();
+    }
+
+    const facultyId = editingMapping.faculty.id;
+    const currentList = [...(assignments[facultyId] || [])];
+    currentList[editingMapping.index] = {
+      class_id: Number(editMappingForm.class_id),
+      subject_code,
+      subject_name,
+    };
+
+    setAssignments((prev) => ({
+      ...prev,
+      [facultyId]: currentList,
+    }));
+
+    const token = localStorage.getItem("access_token");
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/faculty/${facultyId}/assign-classes`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ assignments: currentList }),
+      });
+      if (!res.ok) throw new Error("Failed to update mapping on server");
+      setSuccess("Mapping updated and saved successfully!");
+      handleCloseEditAssignment();
+    } catch (err: any) {
+      setError(err.message || "Failed to update mapping");
+    } finally {
+      setSingleEditLoading(false);
+    }
+  };
+
+  // Open All Mappings Modal for a Faculty
+  const handleOpenFacultyMappingsModal = (faculty: any) => {
+    setFacultyForModal(faculty);
+    setModalAssignmentsList([...(assignments[faculty.id] || [])]);
+    setModalNewAssignment({ class_id: "", subject: "" });
+  };
+
+  const handleCloseFacultyMappingsModal = () => {
+    setFacultyForModal(null);
+  };
+
+  const handleModalAddAssignment = () => {
+    if (!modalNewAssignment.class_id || !modalNewAssignment.subject) return;
+    let subject_code = "";
+    let subject_name = modalNewAssignment.subject;
+    if (modalNewAssignment.subject.includes(" - ")) {
+      const parts = modalNewAssignment.subject.split(" - ");
+      subject_code = parts[0].trim();
+      subject_name = parts[1].trim();
+    }
+
+    if (modalAssignmentsList.some((a) => a.class_id === modalNewAssignment.class_id && a.subject_name === subject_name)) {
+      return;
+    }
+
+    setModalAssignmentsList((prev) => [
+      ...prev,
+      { class_id: Number(modalNewAssignment.class_id), subject_code, subject_name },
+    ]);
+    setModalNewAssignment({ class_id: "", subject: "" });
+  };
+
+  const handleModalRemoveAssignment = (index: number) => {
+    setModalAssignmentsList((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleSaveModalFacultyAssignments = async () => {
+    if (!facultyForModal) return;
+    setModalSaving(true);
+    const facultyId = facultyForModal.id;
+    const token = localStorage.getItem("access_token");
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/faculty/${facultyId}/assign-classes`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ assignments: modalAssignmentsList }),
+      });
+      if (!res.ok) throw new Error("Failed to save assignments");
+      setAssignments((prev) => ({
+        ...prev,
+        [facultyId]: modalAssignmentsList,
+      }));
+      setSuccess(`Mappings updated for ${facultyForModal.name}!`);
+      handleCloseFacultyMappingsModal();
+    } catch (err: any) {
+      setError(err.message || "Failed to save assignments");
+    } finally {
+      setModalSaving(false);
+    }
+  };
+
   // Group classes
   const groupedClasses = useMemo(() => {
     const groups: Record<string, Record<string, any[]>> = {};
@@ -240,7 +383,7 @@ export default function AssignFaculty() {
                 <button 
                   type="submit" 
                   disabled={loading}
-                  className="px-6 py-3 bg-gradient-to-r from-primary to-accent text-primary-foreground hover:opacity-90 rounded-xl font-medium text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap shadow-sm"
+                  className="px-6 py-3 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg font-medium text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap shadow-sm"
                 >
                   {loading ? 'Uploading...' : 'Upload Classes'}
                 </button>
@@ -282,17 +425,30 @@ export default function AssignFaculty() {
                                 const clsObj = classes.find(c => c.id === a.class_id);
                                 const clsName = clsObj ? `${clsObj.department} Sem-${clsObj.semester} ${clsObj.name}` : a.class_name || `Class ID ${a.class_id}`;
                                 return (
-                                  <li key={idx} className="flex items-center justify-between bg-muted/50 px-3 py-1.5 rounded border border-border">
-                                    <span className="text-muted-foreground">
+                                  <li key={idx} className="flex items-center justify-between bg-muted/50 px-3 py-1.5 rounded-lg border border-border">
+                                    <span className="text-muted-foreground text-xs">
                                       <span className="font-medium text-primary">{clsName}</span> - {a.subject_code ? `${a.subject_code} ` : ''}{a.subject_name}
                                     </span>
-                                    <button 
-                                      onClick={() => handleRemoveAssignment(faculty.id, a.class_id, a.subject_name)}
-                                      className="text-destructive/70 hover:text-destructive ml-2 p-1"
-                                      title="Remove Assignment"
-                                    >
-                                      <X className="w-4 h-4" />
-                                    </button>
+                                    <div className="flex items-center gap-1 ml-2">
+                                      <button 
+                                        type="button"
+                                        onClick={() => handleOpenEditAssignment(faculty, idx, a)}
+                                        className="text-muted-foreground hover:text-primary p-1 rounded hover:bg-muted transition-colors cursor-pointer"
+                                        title="Edit this mapping"
+                                        aria-label="Edit mapping"
+                                      >
+                                        <Pencil className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button 
+                                        type="button"
+                                        onClick={() => handleRemoveAssignment(faculty.id, a.class_id, a.subject_name)}
+                                        className="text-destructive/70 hover:text-destructive p-1 rounded hover:bg-destructive/10 transition-colors cursor-pointer"
+                                        title="Remove Assignment"
+                                        aria-label="Remove mapping"
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
                                   </li>
                                 );
                               })}
@@ -332,7 +488,7 @@ export default function AssignFaculty() {
                             <button 
                               onClick={() => handleAddAssignment(faculty.id)}
                               disabled={!na.class_id || !na.subject}
-                              className="bg-primary/10 text-primary py-1.5 rounded-lg border border-primary/20 hover:bg-primary/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs font-medium"
+                              className="bg-primary/10 text-primary py-1.5 rounded-lg border border-primary/20 hover:bg-primary/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs font-medium cursor-pointer"
                             >
                               + Add
                             </button>
@@ -346,9 +502,29 @@ export default function AssignFaculty() {
                             <Save className="w-4 h-4" />
                             <span>Save</span>
                           </button>
+                          <div className="flex items-center justify-end gap-2">
+                            <button 
+                              type="button"
+                              onClick={() => handleOpenFacultyMappingsModal(faculty)}
+                              className="flex items-center justify-center space-x-1.5 text-xs font-semibold px-3 py-2 bg-primary/10 text-primary hover:bg-primary/20 rounded-lg transition-colors border border-primary/20 whitespace-nowrap cursor-pointer"
+                              title="Edit all mappings for this faculty"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                              <span>Edit Mappings</span>
+                            </button>
+                            <button 
+                              type="button"
+                              onClick={() => handleSaveAssignments(faculty.id)}
+                              className="flex items-center justify-center space-x-1.5 text-xs font-semibold px-3.5 py-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 rounded-lg transition-colors border border-emerald-500/20 whitespace-nowrap cursor-pointer"
+                            >
+                              <Save className="w-3.5 h-3.5" />
+                              <span>Save</span>
+                            </button>
+                          </div>
                         </td>
                       </tr>
-                    )})}
+                    );
+                    })}
                     {faculties.length === 0 && (
                       <tr>
                         <td colSpan={4} className="px-6 py-8 text-center text-muted-foreground">
@@ -364,6 +540,262 @@ export default function AssignFaculty() {
           </div>
         </div>
       </main>
+
+      {/* Edit Single Mapping Modal */}
+      {editingMapping && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-card border border-border rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-5 relative">
+            <div className="flex items-center justify-between border-b border-border pb-4">
+              <div>
+                <h3 className="text-lg font-bold text-foreground">Edit Class Mapping</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Update assigned class or subject for {editingMapping.faculty.name}.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseEditAssignment}
+                className="h-8 w-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSingleMapping} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">
+                  Select Class *
+                </label>
+                <select
+                  required
+                  value={editMappingForm.class_id}
+                  onChange={(e) =>
+                    setEditMappingForm({
+                      ...editMappingForm,
+                      class_id: e.target.value ? Number(e.target.value) : "",
+                    })
+                  }
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                >
+                  <option value="">-- Select Class --</option>
+                  {Object.keys(groupedClasses).map((dept) => (
+                    <optgroup key={dept} label={dept}>
+                      {Object.keys(groupedClasses[dept]).map((sem) =>
+                        groupedClasses[dept][sem].map((cls) => (
+                          <option key={cls.id} value={cls.id}>
+                            {sem} {cls.name}
+                          </option>
+                        ))
+                      )}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">
+                  Subject *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editMappingForm.subject}
+                  onChange={(e) =>
+                    setEditMappingForm({ ...editMappingForm, subject: e.target.value })
+                  }
+                  list="faculty-single-subjects"
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  placeholder="e.g. CS101 - Data Structures"
+                />
+                <datalist id="faculty-single-subjects">
+                  {editingMapping.faculty.subjects?.map((s: string, i: number) => (
+                    <option key={i} value={s} />
+                  ))}
+                </datalist>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Type a subject or pick from the faculty&apos;s available subjects.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+                <button
+                  type="button"
+                  onClick={handleCloseEditAssignment}
+                  className="px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground bg-muted hover:bg-muted/80 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={singleEditLoading || !editMappingForm.class_id || !editMappingForm.subject}
+                  className="px-4 py-2 text-xs font-semibold text-primary-text bg-primary hover:bg-primary-hover rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5 shadow-sm"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {singleEditLoading ? "Saving..." : "Update Mapping"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit All Mappings Modal for Faculty */}
+      {facultyForModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-card border border-border rounded-2xl w-full max-w-2xl p-6 shadow-2xl space-y-5 relative max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-border pb-4">
+              <div>
+                <h3 className="text-lg font-bold text-foreground">
+                  Class & Subject Mappings: {facultyForModal.name}
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Manage all assigned classes and subject teaching duties for this faculty member.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseFacultyMappingsModal}
+                className="h-8 w-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+              <div>
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                  Current Assignments ({modalAssignmentsList.length})
+                </h4>
+                {modalAssignmentsList.length === 0 ? (
+                  <div className="p-4 rounded-xl border border-dashed border-border text-center text-xs text-muted-foreground">
+                    No classes or subjects mapped yet. Add one below.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {modalAssignmentsList.map((a, i) => {
+                      const clsObj = classes.find((c) => c.id === a.class_id);
+                      const clsName = clsObj
+                        ? `${clsObj.department} Sem-${clsObj.semester} ${clsObj.name}`
+                        : a.class_name || `Class ID ${a.class_id}`;
+                      return (
+                        <div
+                          key={i}
+                          className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/40 text-xs"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-primary">{clsName}</span>
+                            <span className="text-muted-foreground">&bull;</span>
+                            <span className="text-foreground font-medium">
+                              {a.subject_code ? `${a.subject_code} - ` : ""}
+                              {a.subject_name}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleModalRemoveAssignment(i)}
+                            className="text-destructive/70 hover:text-destructive hover:bg-destructive/10 p-1.5 rounded-md transition-colors"
+                            title="Remove mapping"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Add New Assignment in Modal */}
+              <div className="p-4 rounded-xl border border-border bg-muted/20 space-y-3">
+                <h4 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5 text-primary" />
+                  Add New Mapping
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-muted-foreground mb-1">
+                      Class
+                    </label>
+                    <select
+                      value={modalNewAssignment.class_id}
+                      onChange={(e) =>
+                        setModalNewAssignment({
+                          ...modalNewAssignment,
+                          class_id: e.target.value ? Number(e.target.value) : "",
+                        })
+                      }
+                      className="w-full bg-background border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    >
+                      <option value="">-- Select Class --</option>
+                      {Object.keys(groupedClasses).map((dept) => (
+                        <optgroup key={dept} label={dept}>
+                          {Object.keys(groupedClasses[dept]).map((sem) =>
+                            groupedClasses[dept][sem].map((cls) => (
+                              <option key={cls.id} value={cls.id}>
+                                {sem} {cls.name}
+                              </option>
+                            ))
+                          )}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-muted-foreground mb-1">
+                      Subject
+                    </label>
+                    <select
+                      value={modalNewAssignment.subject}
+                      onChange={(e) =>
+                        setModalNewAssignment({ ...modalNewAssignment, subject: e.target.value })
+                      }
+                      className="w-full bg-background border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    >
+                      <option value="">-- Select Subject --</option>
+                      {facultyForModal.subjects?.map((subj: string, idx: number) => (
+                        <option key={idx} value={subj}>
+                          {subj}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleModalAddAssignment}
+                    disabled={!modalNewAssignment.class_id || !modalNewAssignment.subject}
+                    className="px-3 py-1.5 text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded-lg transition-colors disabled:opacity-40"
+                  >
+                    + Add Mapping
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+              <button
+                type="button"
+                onClick={handleCloseFacultyMappingsModal}
+                className="px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground bg-muted hover:bg-muted/80 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveModalFacultyAssignments}
+                disabled={modalSaving}
+                className="px-4 py-2 text-xs font-semibold text-primary-text bg-primary hover:bg-primary-hover rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5 shadow-sm"
+              >
+                <Save className="w-3.5 h-3.5" />
+                {modalSaving ? "Saving..." : "Save All Mappings"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

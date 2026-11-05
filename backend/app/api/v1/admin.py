@@ -367,7 +367,33 @@ class FacultyAssignmentInput(BaseModel):
 class AssignClassesRequest(BaseModel):
     assignments: list[FacultyAssignmentInput]
 
+class SingleAssignmentUpdateSchema(BaseModel):
+    old_class_id: int
+    old_subject_name: str
+    new_class_id: int
+    new_subject_name: str
+    new_subject_code: Optional[str] = None
+
+class FacultyUpdateSchema(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    emp_id: Optional[str] = None
+    department_id: Optional[int] = None
+    department_name: Optional[str] = None
+    subjects: Optional[list[str]] = None
+
+class StudentUpdateSchema(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    gr_no: Optional[str] = None
+    enrollment_no: Optional[str] = None
+    department_id: Optional[int] = None
+    department_name: Optional[str] = None
+    class_id: Optional[int] = None
+    subjects: Optional[list[str]] = None
+
 @router.post("/faculty/{faculty_id}/assign-classes", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+@router.put("/faculty/{faculty_id}/assign-classes", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
 async def assign_faculty_classes(
     faculty_id: int,
     req: AssignClassesRequest,
@@ -391,6 +417,54 @@ async def assign_faculty_classes(
         
     await db.commit()
     return {"msg": "Classes assigned successfully"}
+
+@router.put("/faculty/{faculty_id}/assignment", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def update_single_faculty_assignment(
+    faculty_id: int,
+    req: SingleAssignmentUpdateSchema,
+    db: AsyncSession = Depends(get_db)
+):
+    prof = await db.get(FacultyProfile, faculty_id)
+    if not prof:
+        raise HTTPException(status_code=404, detail="Faculty not found")
+
+    target_cls = await db.get(Class, req.new_class_id)
+    if not target_cls:
+        raise HTTPException(status_code=400, detail=f"Class with ID {req.new_class_id} not found")
+
+    from app.models.profile import FacultyAssignment
+    res = await db.execute(select(FacultyAssignment).where(
+        FacultyAssignment.faculty_id == faculty_id,
+        FacultyAssignment.class_id == req.old_class_id,
+        FacultyAssignment.subject_name == req.old_subject_name
+    ))
+    assign = res.scalars().first()
+
+    # Check if target assignment already exists to avoid duplicate constraint collisions
+    dup_res = await db.execute(select(FacultyAssignment).where(
+        FacultyAssignment.faculty_id == faculty_id,
+        FacultyAssignment.class_id == req.new_class_id,
+        FacultyAssignment.subject_name == req.new_subject_name
+    ))
+    existing_target = dup_res.scalars().first()
+
+    if existing_target and assign and existing_target.id != assign.id:
+        await db.delete(assign)
+    elif assign:
+        assign.class_id = req.new_class_id
+        assign.subject_name = req.new_subject_name
+        assign.subject_code = req.new_subject_code
+    elif not existing_target:
+        assign = FacultyAssignment(
+            faculty_id=faculty_id,
+            class_id=req.new_class_id,
+            subject_name=req.new_subject_name,
+            subject_code=req.new_subject_code
+        )
+        db.add(assign)
+
+    await db.commit()
+    return {"msg": "Assignment mapping updated successfully"}
 
 @router.get("/analytics")
 async def get_analytics(
@@ -491,6 +565,8 @@ async def list_faculties(db: AsyncSession = Depends(get_db)):
             "emp_id": emp_id,
             "name": prof.name,
             "department": f"{dept_id_code} - {dept_name}" if dept_id_code else dept_name,
+            "department_id": prof.department_id,
+            "department_name": dept_name,
             "subjects": subjects,
             "assigned_classes": assigned_classes,
             "assigned_class_ids": assigned_class_ids,
@@ -502,6 +578,90 @@ async def list_faculties(db: AsyncSession = Depends(get_db)):
         })
     return faculties
 
+@router.put("/faculties/{faculty_id}", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def update_faculty(
+    faculty_id: int,
+    req: FacultyUpdateSchema,
+    db: AsyncSession = Depends(get_db)
+):
+    prof = await db.get(FacultyProfile, faculty_id)
+    if not prof:
+        raise HTTPException(status_code=404, detail="Faculty not found")
+
+    user = await db.get(User, prof.user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User account not found")
+
+    # Update name
+    if req.name is not None and req.name.strip():
+        prof.name = req.name.strip()
+
+    # Update email
+    if req.email is not None and req.email.strip():
+        new_email = req.email.strip().lower()
+        if new_email != (user.email or "").lower():
+            exist_user = await db.execute(select(User).where(User.email == new_email, User.id != user.id))
+            if exist_user.scalars().first():
+                raise HTTPException(status_code=400, detail="Email is already in use by another user")
+            user.email = new_email
+
+    # Update emp_id (login alias)
+    if req.emp_id is not None and req.emp_id.strip():
+        new_emp = req.emp_id.strip()
+        alias_res = await db.execute(select(LoginAlias).where(LoginAlias.user_id == user.id))
+        alias = alias_res.scalars().first()
+        if alias:
+            if alias.alias != new_emp:
+                exist_alias = await db.execute(select(LoginAlias).where(LoginAlias.alias == new_emp, LoginAlias.user_id != user.id))
+                if exist_alias.scalars().first():
+                    raise HTTPException(status_code=400, detail="Employee ID already exists for another user")
+                alias.alias = new_emp
+        else:
+            exist_alias = await db.execute(select(LoginAlias).where(LoginAlias.alias == new_emp))
+            if exist_alias.scalars().first():
+                raise HTTPException(status_code=400, detail="Employee ID already exists for another user")
+            db.add(LoginAlias(user_id=user.id, alias=new_emp))
+
+    # Update Department
+    if req.department_id is not None:
+        prof.department_id = req.department_id
+    elif req.department_name is not None and req.department_name.strip():
+        dept_name = req.department_name.strip()
+        dept_res = await db.execute(select(Department).where(Department.name == dept_name))
+        dept = dept_res.scalars().first()
+        if not dept:
+            dept = Department(name=dept_name)
+            db.add(dept)
+            await db.flush()
+        prof.department_id = dept.id
+
+    # Update Subjects
+    if req.subjects is not None:
+        await db.execute(delete(FacultySubject).where(FacultySubject.faculty_id == faculty_id))
+        seen_subj = set()
+        for subj in req.subjects:
+            s_clean = subj.strip()
+            if not s_clean:
+                continue
+            s_code = None
+            s_name = s_clean
+            if " - " in s_clean:
+                parts = s_clean.split(" - ", 1)
+                s_code = parts[0].strip()
+                s_name = parts[1].strip()
+            
+            if s_name.lower() not in seen_subj:
+                seen_subj.add(s_name.lower())
+                db.add(FacultySubject(
+                    faculty_id=faculty_id,
+                    subject_code=s_code,
+                    subject_name=s_name
+                ))
+
+    await db.commit()
+    await db.refresh(prof)
+    return {"msg": "Faculty updated successfully", "id": prof.id}
+
 @router.delete("/faculties/{faculty_id}", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
 async def delete_faculty(faculty_id: int, db: AsyncSession = Depends(get_db)):
     prof = await db.get(FacultyProfile, faculty_id)
@@ -511,6 +671,12 @@ async def delete_faculty(faculty_id: int, db: AsyncSession = Depends(get_db)):
     await db.execute(delete(User).where(User.id == prof.user_id))
     await db.commit()
     return {"msg": "Faculty deleted successfully"}
+
+@router.get("/departments", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN, RoleEnum.FACULTY]))])
+async def list_departments(db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(Department).order_by(Department.name))
+    depts = res.scalars().all()
+    return [{"id": d.id, "name": d.name, "department_id": d.department_id} for d in depts]
 
 @router.get("/classes", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN, RoleEnum.FACULTY]))])
 async def list_classes(db: AsyncSession = Depends(get_db)):
@@ -524,6 +690,7 @@ async def list_classes(db: AsyncSession = Depends(get_db)):
             "id": cls.id,
             "name": cls.name,
             "semester": cls.semester,
+            "department_id": cls.department_id,
             "department": f"{dept_id_code} - {dept_name}" if dept_id_code else dept_name
         })
     return classes
@@ -548,6 +715,9 @@ async def list_students(db: AsyncSession = Depends(get_db)):
             "enrollment_no": prof.enrollment_number,
             "name": prof.name,
             "department": f"{dept_id_code} - {dept_name}" if dept_id_code else dept_name,
+            "department_id": prof.department_id,
+            "department_name": dept_name,
+            "class_id": prof.class_id,
             "class_name": cls_name,
             "semester": sem,
             "subjects": subjects,
@@ -557,6 +727,102 @@ async def list_students(db: AsyncSession = Depends(get_db)):
             "password_email_sent": student_user.password_email_sent
         })
     return students
+
+@router.put("/students/{student_id}", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def update_student(
+    student_id: int,
+    req: StudentUpdateSchema,
+    db: AsyncSession = Depends(get_db)
+):
+    prof = await db.get(StudentProfile, student_id)
+    if not prof:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    user = await db.get(User, prof.user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User account not found")
+
+    # Update name
+    if req.name is not None and req.name.strip():
+        prof.name = req.name.strip()
+
+    # Update email
+    if req.email is not None and req.email.strip():
+        new_email = req.email.strip().lower()
+        if new_email != (user.email or "").lower():
+            exist_user = await db.execute(select(User).where(User.email == new_email, User.id != user.id))
+            if exist_user.scalars().first():
+                raise HTTPException(status_code=400, detail="Email is already in use by another user")
+            user.email = new_email
+
+    # Update GR Number
+    if req.gr_no is not None and req.gr_no.strip():
+        new_gr = req.gr_no.strip()
+        if new_gr != prof.gr_number:
+            exist_gr = await db.execute(select(StudentProfile).where(StudentProfile.gr_number == new_gr, StudentProfile.id != student_id))
+            if exist_gr.scalars().first():
+                raise HTTPException(status_code=400, detail="GR Number already in use by another student")
+            prof.gr_number = new_gr
+            
+            alias_res = await db.execute(select(LoginAlias).where(LoginAlias.user_id == user.id))
+            alias = alias_res.scalars().first()
+            if alias:
+                alias.alias = new_gr
+            else:
+                db.add(LoginAlias(user_id=user.id, alias=new_gr))
+
+    # Update Enrollment Number
+    if req.enrollment_no is not None and req.enrollment_no.strip():
+        new_enr = req.enrollment_no.strip()
+        if new_enr != prof.enrollment_number:
+            exist_enr = await db.execute(select(StudentProfile).where(StudentProfile.enrollment_number == new_enr, StudentProfile.id != student_id))
+            if exist_enr.scalars().first():
+                raise HTTPException(status_code=400, detail="Enrollment number already in use by another student")
+            prof.enrollment_number = new_enr
+
+    # Update Department
+    if req.department_id is not None:
+        prof.department_id = req.department_id
+    elif req.department_name is not None and req.department_name.strip():
+        dept_name = req.department_name.strip()
+        dept_res = await db.execute(select(Department).where(Department.name == dept_name))
+        dept = dept_res.scalars().first()
+        if not dept:
+            dept = Department(name=dept_name)
+            db.add(dept)
+            await db.flush()
+        prof.department_id = dept.id
+
+    # Update Class
+    if req.class_id is not None:
+        prof.class_id = req.class_id
+
+    # Update Subjects
+    if req.subjects is not None:
+        await db.execute(delete(StudentSubject).where(StudentSubject.student_id == student_id))
+        seen_subj = set()
+        for subj in req.subjects:
+            s_clean = subj.strip()
+            if not s_clean:
+                continue
+            s_code = None
+            s_name = s_clean
+            if " - " in s_clean:
+                parts = s_clean.split(" - ", 1)
+                s_code = parts[0].strip()
+                s_name = parts[1].strip()
+            
+            if s_name.lower() not in seen_subj:
+                seen_subj.add(s_name.lower())
+                db.add(StudentSubject(
+                    student_id=student_id,
+                    subject_code=s_code,
+                    subject_name=s_name
+                ))
+
+    await db.commit()
+    await db.refresh(prof)
+    return {"msg": "Student updated successfully", "id": prof.id}
 
 @router.delete("/students/{student_id}", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
 async def delete_student(student_id: int, db: AsyncSession = Depends(get_db)):

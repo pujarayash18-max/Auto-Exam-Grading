@@ -13,6 +13,7 @@ eggs/
 .eggs/
 lib/
 lib64/
+!frontend/src/lib/
 parts/
 sdist/
 var/
@@ -51,6 +52,8 @@ backend/uploads/audio/*
 !backend/uploads/audio/.gitkeep
 backend/uploads/materials/*
 !backend/uploads/materials/.gitkeep
+backend/uploads/mcq_materials/*
+!backend/uploads/mcq_materials/.gitkeep
 
 # YouPI Assets & Runtime Data
 youpi-pg/assets/*.mp4

@@ -487,6 +487,20 @@ async def generate_questions(
             db.add(new_q)
             saved_questions.append(new_q)
 
+    # Deduplicate generated questions by normalized text
+    unique_saved = []
+    seen_texts = set()
+    for q in saved_questions:
+        norm = re.sub(r'^\[.*?\]\s*', '', q.question_text).strip().lower()
+        norm = re.sub(r'[^a-z0-9]', '', norm)
+        if norm and norm in seen_texts:
+            db.expunge(q)
+            continue
+        if norm:
+            seen_texts.add(norm)
+        unique_saved.append(q)
+    saved_questions = unique_saved
+
     # Final hard limit safeguard: strictly enforce target_total
     if len(saved_questions) > target_total:
         excess = saved_questions[target_total:]
