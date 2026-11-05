@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 from typing import List
 
@@ -19,7 +20,11 @@ async def get_student_profile(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    prof_res = await db.execute(select(StudentProfile).where(StudentProfile.user_id == current_user.id))
+    prof_res = await db.execute(
+        select(StudentProfile)
+        .options(selectinload(StudentProfile.department), selectinload(StudentProfile.student_class))
+        .where(StudentProfile.user_id == current_user.id)
+    )
     prof = prof_res.scalars().first()
     if not prof:
         raise HTTPException(status_code=404, detail="Profile not found")

@@ -251,6 +251,9 @@ export default function FacultyMCQPage() {
     setSubmitting(true);
     try {
       const token = localStorage.getItem('access_token');
+      if (!token) {
+        throw new Error('Your session has expired. Please log in again.');
+      }
       const payload = {
         subject_name: subjectName.trim(),
         class_id: Number(selectedClassId),
@@ -273,8 +276,12 @@ export default function FacultyMCQPage() {
       });
 
       if (!createRes.ok) {
-        const err = await createRes.json();
-        throw new Error(err.detail || 'Failed to create exam');
+        let errMsg = 'Failed to create exam';
+        try {
+          const err = await createRes.json();
+          errMsg = err.detail || (typeof err === 'string' ? err : JSON.stringify(err));
+        } catch {}
+        throw new Error(errMsg);
       }
 
       const newExam = await createRes.json();
@@ -333,7 +340,12 @@ export default function FacultyMCQPage() {
       setAiNotesText('');
       fetchExams();
     } catch (err: any) {
-      setSubmitError(err.message || 'Failed to complete exam setup');
+      const msg = err?.message || 'Failed to complete exam setup';
+      if (msg === 'Failed to fetch') {
+        setSubmitError('Connection error: Unable to reach the backend server. Please verify your connection or refresh the page.');
+      } else {
+        setSubmitError(msg);
+      }
     } finally {
       setSubmitting(false);
     }

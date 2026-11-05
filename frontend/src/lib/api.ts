@@ -1,5 +1,27 @@
-const rawBase = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').trim();
-export const API_BASE_URL = rawBase.replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '');
+export function getApiBaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname, port, origin } = window.location;
+    // When accessed via Cloudflare Tunnel, public IP, custom domain, or local dev:
+    // always use origin so that /api requests are routed cleanly without Mixed Content or CORS issues
+    if (
+      protocol === 'https:' ||
+      (hostname !== 'localhost' && hostname !== '127.0.0.1') ||
+      port === '80' ||
+      port === '' ||
+      port === '3000'
+    ) {
+      return origin;
+    }
+  }
+  const rawBase = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').trim();
+  return rawBase.replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '');
+}
+
+export const API_BASE_URL = {
+  toString: () => getApiBaseUrl(),
+  valueOf: () => getApiBaseUrl(),
+  [Symbol.toPrimitive]: () => getApiBaseUrl(),
+} as unknown as string;
 
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
