@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE_URL } from '@/lib/api';
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
@@ -77,7 +78,7 @@ export default function StudentExamView({ params }: { params: { id: string } }) 
         }
 
         // Fetch real session state from backend
-        const res = await fetch(`http://localhost:8000/api/v1/viva/student-session/${params.id}`, {
+        const res = await fetch(`${API_BASE_URL}/api/v1/viva/student-session/${params.id}`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
 
@@ -185,7 +186,7 @@ export default function StudentExamView({ params }: { params: { id: string } }) 
     
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://localhost:8000/api/v1/viva/student-session/${params.id}/submit-answer`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/viva/student-session/${params.id}/submit-answer`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,

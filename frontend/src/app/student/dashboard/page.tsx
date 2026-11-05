@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE_URL } from '@/lib/api';
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -26,7 +27,7 @@ export default function StudentDashboard() {
         router.push('/auth/login');
         return;
       }
-      const res = await fetch('http://localhost:8000/api/v1/student/profile', {
+      const res = await fetch(`${API_BASE_URL}/api/v1/student/profile`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) setProfile(await res.json());
@@ -36,7 +37,7 @@ export default function StudentDashboard() {
   const fetchResults = async () => {
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch('http://localhost:8000/api/v1/student/results', {
+      const res = await fetch(`${API_BASE_URL}/api/v1/student/results`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) setResults(await res.json());
@@ -46,7 +47,7 @@ export default function StudentDashboard() {
   const fetchScheduledExams = async () => {
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch('http://localhost:8000/api/v1/student/scheduled-exams', {
+      const res = await fetch(`${API_BASE_URL}/api/v1/student/scheduled-exams`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) setScheduledExams(await res.json());
@@ -227,7 +228,7 @@ export default function StudentDashboard() {
                                 onClick={async () => {
                                   const token = localStorage.getItem('access_token');
                                   try {
-                                    const res = await fetch(`http://localhost:8000/api/v1/results/${r.viva_run_id}/audio/download`, {
+                                    const res = await fetch(`${API_BASE_URL}/api/v1/results/${r.viva_run_id}/audio/download`, {
                                       headers: { 'Authorization': `Bearer ${token}` }
                                     });
                                     if (res.ok) {
@@ -262,7 +263,7 @@ export default function StudentDashboard() {
                                 onClick={async () => {
                                   const token = localStorage.getItem('access_token');
                                   try {
-                                    const res = await fetch(`http://localhost:8000/api/v1/results/${r.viva_run_id}/transcript/download`, {
+                                    const res = await fetch(`${API_BASE_URL}/api/v1/results/${r.viva_run_id}/transcript/download`, {
                                       headers: { 'Authorization': `Bearer ${token}` }
                                     });
                                     if (res.ok) {

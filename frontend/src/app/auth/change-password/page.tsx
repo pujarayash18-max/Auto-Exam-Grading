@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/lib/api';
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -26,7 +27,7 @@ export default function ChangePasswordPage() {
         throw new Error("No access token found. Please log in again.");
       }
 
-      const res = await fetch("http://localhost:8000/api/v1/auth/change-password", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/auth/change-password`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

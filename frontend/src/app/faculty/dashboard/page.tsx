@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE_URL } from '@/lib/api';
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
@@ -159,7 +160,7 @@ export default function FacultyDashboard() {
   const fetchMaterials = async (examId: number) => {
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://localhost:8000/api/v1/faculty/exams/${examId}/materials`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/faculty/exams/${examId}/materials`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -180,7 +181,7 @@ export default function FacultyDashboard() {
     if (!newlyScheduledExamId) return;
     try {
       const token = localStorage.getItem('access_token');
-      await fetch(`http://localhost:8000/api/v1/faculty/exams/${newlyScheduledExamId}/exam-type`, {
+      await fetch(`${API_BASE_URL}/api/v1/faculty/exams/${newlyScheduledExamId}/exam-type`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -202,9 +203,9 @@ export default function FacultyDashboard() {
         return;
       }
       const [examsRes, assignmentsRes, walletRes] = await Promise.all([
-        fetch('http://localhost:8000/api/v1/faculty/exams', { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch('http://localhost:8000/api/v1/faculty/assignments', { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch('http://localhost:8000/api/v1/faculty/wallet', { headers: { 'Authorization': `Bearer ${token}` } })
+        fetch(`${API_BASE_URL}/api/v1/faculty/exams`, { headers: { 'Authorization': `Bearer ${token}` } }),
+        fetch(`${API_BASE_URL}/api/v1/faculty/assignments`, { headers: { 'Authorization': `Bearer ${token}` } }),
+        fetch(`${API_BASE_URL}/api/v1/faculty/wallet`, { headers: { 'Authorization': `Bearer ${token}` } })
       ]);
       if (examsRes.ok) setExams(await examsRes.json());
       if (assignmentsRes.ok) setAssignments(await assignmentsRes.json());
@@ -302,7 +303,7 @@ export default function FacultyDashboard() {
         return;
       }
 
-      const res = await fetch('http://localhost:8000/api/v1/faculty/exams', {
+      const res = await fetch(`${API_BASE_URL}/api/v1/faculty/exams`, {
         method: 'POST',
         headers: { 
           'Authorization': `Bearer ${token}`,
@@ -353,7 +354,7 @@ export default function FacultyDashboard() {
       formData.append('weightage', fileWeightage || '20');
       formData.append('exam_type', uploadExamMode);
       
-      const res = await fetch(`http://localhost:8000/api/v1/faculty/exams/${newlyScheduledExamId}/materials`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/faculty/exams/${newlyScheduledExamId}/materials`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
         body: formData
@@ -377,7 +378,7 @@ export default function FacultyDashboard() {
     if (!newlyScheduledExamId) return;
     try {
       const token = localStorage.getItem('access_token');
-      await fetch(`http://localhost:8000/api/v1/faculty/exams/${newlyScheduledExamId}/materials/${materialId}`, {
+      await fetch(`${API_BASE_URL}/api/v1/faculty/exams/${newlyScheduledExamId}/materials/${materialId}`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -402,7 +403,7 @@ export default function FacultyDashboard() {
       const token = localStorage.getItem('access_token');
       await Promise.all(
         updated.map(m => 
-          fetch(`http://localhost:8000/api/v1/faculty/exams/${newlyScheduledExamId}/materials/${m.id}`, {
+          fetch(`${API_BASE_URL}/api/v1/faculty/exams/${newlyScheduledExamId}/materials/${m.id}`, {
             method: 'PUT',
             headers: {
               'Authorization': `Bearer ${token}`,
@@ -423,7 +424,7 @@ export default function FacultyDashboard() {
     
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://localhost:8000/api/v1/faculty/exams/${newlyScheduledExamId}/materials/${materialId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/faculty/exams/${newlyScheduledExamId}/materials/${materialId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -474,7 +475,7 @@ export default function FacultyDashboard() {
         weightageMap[m.id] = parseFloat(m.weightage) || 0;
       });
 
-      const res = await fetch(`http://localhost:8000/api/v1/faculty/exams/${newlyScheduledExamId}/generate-questions`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/faculty/exams/${newlyScheduledExamId}/generate-questions`, {
         method: 'POST',
         headers: { 
           'Authorization': `Bearer ${token}`,
@@ -508,7 +509,7 @@ export default function FacultyDashboard() {
   const openQuestionsPreview = async (examId: number, subjectName: string) => {
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://localhost:8000/api/v1/faculty/exams/${examId}/questions`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/faculty/exams/${examId}/questions`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -531,7 +532,7 @@ export default function FacultyDashboard() {
     setSavingQuestions(true);
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://localhost:8000/api/v1/faculty/exams/${previewExamId}/questions`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/faculty/exams/${previewExamId}/questions`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -716,7 +717,7 @@ export default function FacultyDashboard() {
         }))
       };
 
-      const res = await fetch(`http://localhost:8000/api/v1/faculty/exams/${rescheduleExamId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/faculty/exams/${rescheduleExamId}`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -749,7 +750,7 @@ export default function FacultyDashboard() {
     setDeletingExamId(examId);
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://localhost:8000/api/v1/faculty/exams/${examId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/faculty/exams/${examId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });

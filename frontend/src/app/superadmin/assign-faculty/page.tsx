@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/lib/api';
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import SuperAdminSidebar from "@/components/layout/SuperAdminSidebar";
@@ -28,10 +29,10 @@ export default function AssignFaculty() {
 
     try {
       const [facRes, clsRes] = await Promise.all([
-        fetch("http://localhost:8000/api/v1/admin/faculties", {
+        fetch(`${API_BASE_URL}/api/v1/admin/faculties`, {
           headers: { "Authorization": `Bearer ${token}` }
         }),
-        fetch("http://localhost:8000/api/v1/admin/classes", {
+        fetch(`${API_BASE_URL}/api/v1/admin/classes`, {
           headers: { "Authorization": `Bearer ${token}` }
         })
       ]);
@@ -74,7 +75,7 @@ export default function AssignFaculty() {
 
     const token = localStorage.getItem("access_token");
     try {
-      const res = await fetch("http://localhost:8000/api/v1/admin/classes/upload", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/classes/upload`, {
         method: "POST",
         headers: { "Authorization": `Bearer ${token}` },
         body: formData
@@ -143,7 +144,7 @@ export default function AssignFaculty() {
     const token = localStorage.getItem("access_token");
     
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/admin/faculty/${facultyId}/assign-classes`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/faculty/${facultyId}/assign-classes`, {
         method: "POST",
         headers: { 
           "Authorization": `Bearer ${token}`,

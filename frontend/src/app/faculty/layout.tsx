@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE_URL } from '@/lib/api';
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
@@ -32,7 +33,7 @@ export default function FacultyLayout({ children }: { children: React.ReactNode 
     try {
       const token = localStorage.getItem("access_token");
       if (!token) return;
-      const res = await fetch("http://localhost:8000/api/v1/faculty/wallet", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/faculty/wallet`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {

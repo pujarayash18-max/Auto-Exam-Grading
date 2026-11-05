@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/lib/api';
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -88,8 +89,8 @@ export default function FacultyQuotasPage() {
       const headers = { Authorization: `Bearer ${token}` };
 
       const [resFaculty, resResv] = await Promise.all([
-        fetch("http://localhost:8000/api/v1/admin/ai/faculty-breakdown", { headers }),
-        fetch("http://localhost:8000/api/v1/admin/ai/reservations", { headers }),
+        fetch(`${API_BASE_URL}/api/v1/admin/ai/faculty-breakdown`, { headers }),
+        fetch(`${API_BASE_URL}/api/v1/admin/ai/reservations`, { headers }),
       ]);
 
       if (resFaculty.status === 401 || resResv.status === 401) {
@@ -138,7 +139,7 @@ export default function FacultyQuotasPage() {
           : parseInt(quotaInput.replace(/,/g, ""), 10);
 
       const res = await fetch(
-        `http://localhost:8000/api/v1/admin/ai/faculty/${editingFaculty.faculty_id}/quota`,
+        `${API_BASE_URL}/api/v1/admin/ai/faculty/${editingFaculty.faculty_id}/quota`,
         {
           method: "PUT",
           headers: {

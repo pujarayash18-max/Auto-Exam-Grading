@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/lib/api';
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -157,7 +158,7 @@ export default function AISettingsBillingPage() {
       const headers = { Authorization: `Bearer ${token}` };
 
       // 1. Fetch AI Settings
-      const resSettings = await fetch("http://localhost:8000/api/v1/admin/ai/settings", { headers });
+      const resSettings = await fetch(`${API_BASE_URL}/api/v1/admin/ai/settings`, { headers });
       if (resSettings.status === 401) {
         router.push("/auth/login");
         return;
@@ -181,14 +182,14 @@ export default function AISettingsBillingPage() {
       }
 
       // 2. Fetch Usage Logs
-      const resUsage = await fetch("http://localhost:8000/api/v1/admin/ai/usage", { headers });
+      const resUsage = await fetch(`${API_BASE_URL}/api/v1/admin/ai/usage`, { headers });
       if (resUsage.ok) {
         const u = await resUsage.json();
         setRecentLogs(u.recent_logs || []);
       }
 
       // 3. Fetch Dynamic Plans
-      const resPlans = await fetch("http://localhost:8000/api/v1/admin/ai/plans", { headers });
+      const resPlans = await fetch(`${API_BASE_URL}/api/v1/admin/ai/plans`, { headers });
       if (resPlans.ok) {
         const p = await resPlans.json();
         setPlans(p.plans || []);
@@ -200,7 +201,7 @@ export default function AISettingsBillingPage() {
       }
 
       // 4. Fetch Recharge Invoices
-      const resTxns = await fetch("http://localhost:8000/api/v1/admin/ai/recharge/transactions", { headers });
+      const resTxns = await fetch(`${API_BASE_URL}/api/v1/admin/ai/recharge/transactions`, { headers });
       if (resTxns.ok) {
         const tx = await resTxns.json();
         setTransactions(tx || []);
@@ -238,14 +239,14 @@ export default function AISettingsBillingPage() {
           const token = getAuthToken();
           if (!token) return;
           const res = await fetch(
-            `http://localhost:8000/api/v1/admin/ai/recharge/order-status/${checkoutData.transaction_id}`,
+            `${API_BASE_URL}/api/v1/admin/ai/recharge/order-status/${checkoutData.transaction_id}`,
             { headers: { Authorization: `Bearer ${token}` } }
           );
           if (res.ok) {
             const statusData = await res.json();
             if (statusData.status === "COMPLETED") {
               const invRes = await fetch(
-                `http://localhost:8000/api/v1/admin/ai/recharge/invoice/${checkoutData.transaction_id}`,
+                `${API_BASE_URL}/api/v1/admin/ai/recharge/invoice/${checkoutData.transaction_id}`,
                 { headers: { Authorization: `Bearer ${token}` } }
               );
               if (invRes.ok) {
@@ -322,7 +323,7 @@ export default function AISettingsBillingPage() {
       if (claudeKey.trim()) payload.claude_api_key = claudeKey.trim();
       if (ollamaHost.trim()) payload.ollama_host = ollamaHost.trim();
 
-      const res = await fetch("http://localhost:8000/api/v1/admin/ai/settings", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/ai/settings`, {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -399,7 +400,7 @@ export default function AISettingsBillingPage() {
         payload.custom_tokens = customTokens;
       }
 
-      const res = await fetch("http://localhost:8000/api/v1/admin/ai/recharge/create-order", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/ai/recharge/create-order`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -432,7 +433,7 @@ export default function AISettingsBillingPage() {
       const token = getAuthToken();
 
       // Send confirmation to YouPI webhook endpoint
-      const res = await fetch("http://localhost:8000/api/v1/admin/ai/recharge/webhook/youpi", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/ai/recharge/webhook/youpi`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -447,7 +448,7 @@ export default function AISettingsBillingPage() {
 
       if (res.ok) {
         const invRes = await fetch(
-          `http://localhost:8000/api/v1/admin/ai/recharge/invoice/${checkoutData.transaction_id}`,
+          `${API_BASE_URL}/api/v1/admin/ai/recharge/invoice/${checkoutData.transaction_id}`,
           { headers: { Authorization: `Bearer ${token}` } }
         );
         if (invRes.ok) {
@@ -480,7 +481,7 @@ export default function AISettingsBillingPage() {
   const handleViewInvoice = async (txnId: string) => {
     const token = getAuthToken();
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/admin/ai/recharge/invoice/${txnId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/ai/recharge/invoice/${txnId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -520,7 +521,7 @@ export default function AISettingsBillingPage() {
     const token = getAuthToken();
 
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/admin/ai/reset-balance?action=${actionType}`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/ai/reset-balance?action=${actionType}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -545,7 +546,7 @@ export default function AISettingsBillingPage() {
     setAddingPlan(true);
     try {
       const token = getAuthToken();
-      const res = await fetch("http://localhost:8000/api/v1/admin/ai/plans", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/ai/plans`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -579,7 +580,7 @@ export default function AISettingsBillingPage() {
     if (!confirm(`Are you sure you want to deactivate plan '${planName}'?`)) return;
     try {
       const token = getAuthToken();
-      const res = await fetch(`http://localhost:8000/api/v1/admin/ai/plans/${planId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/ai/plans/${planId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });

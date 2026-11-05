@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/lib/api';
 
 import { useState, useEffect } from "react";
 import SuperAdminSidebar from "@/components/layout/SuperAdminSidebar";
@@ -24,7 +25,7 @@ export default function ManageStudents() {
     if (!token) return router.push("/auth/login");
 
     try {
-      const res = await fetch("http://localhost:8000/api/v1/admin/students", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/students`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       
@@ -59,7 +60,7 @@ export default function ManageStudents() {
 
     const token = localStorage.getItem("access_token");
     try {
-      const res = await fetch("http://localhost:8000/api/v1/admin/students/upload", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/students/upload`, {
         method: "POST",
         headers: { "Authorization": `Bearer ${token}` },
         body: formData
@@ -92,7 +93,7 @@ export default function ManageStudents() {
     setSuccess("");
     const token = localStorage.getItem("access_token");
     try {
-      const res = await fetch("http://localhost:8000/api/v1/admin/generate-passwords/student", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/generate-passwords/student`, {
         method: "POST",
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -123,7 +124,7 @@ export default function ManageStudents() {
     setSuccess("");
     const token = localStorage.getItem("access_token");
     try {
-      const res = await fetch("http://localhost:8000/api/v1/admin/send-emails/student", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/send-emails/student`, {
         method: "POST",
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -152,7 +153,7 @@ export default function ManageStudents() {
     if (!confirm("Are you sure you want to delete this student?")) return;
     const token = localStorage.getItem("access_token");
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/admin/students/${id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/students/${id}`, {
         method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` }
       });

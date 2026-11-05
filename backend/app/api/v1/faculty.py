@@ -116,6 +116,13 @@ async def upload_exam_material(
     if not file.filename.endswith(('.pdf', '.ppt', '.pptx')):
         raise HTTPException(status_code=400, detail="Only PDF and PPT files allowed")
         
+    MAX_FILE_SIZE = 25 * 1024 * 1024 # 25 MB
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+    if file_size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large. Maximum supported upload size is 25 MB.")
+
     file_path = os.path.join(UPLOAD_DIR, f"{exam_id}_{file.filename}")
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)

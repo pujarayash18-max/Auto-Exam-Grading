@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/lib/api';
 
 import { useState, useEffect } from "react";
 import SuperAdminSidebar from "@/components/layout/SuperAdminSidebar";
@@ -23,7 +24,7 @@ export default function ManageClasses() {
     if (!token) return router.push("/auth/login");
 
     try {
-      const res = await fetch("http://localhost:8000/api/v1/admin/classes", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/classes`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       
@@ -58,7 +59,7 @@ export default function ManageClasses() {
 
     const token = localStorage.getItem("access_token");
     try {
-      const res = await fetch("http://localhost:8000/api/v1/admin/classes/upload", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/classes/upload`, {
         method: "POST",
         headers: { "Authorization": `Bearer ${token}` },
         body: formData
@@ -89,7 +90,7 @@ export default function ManageClasses() {
     if (!confirm("Are you sure you want to delete this class?")) return;
     const token = localStorage.getItem("access_token");
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/admin/classes/${id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/classes/${id}`, {
         method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` }
       });

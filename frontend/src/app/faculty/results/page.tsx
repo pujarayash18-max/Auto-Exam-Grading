@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE_URL } from '@/lib/api';
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -24,7 +25,7 @@ export default function FacultyResultsDashboard() {
     setLoading(true);
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://localhost:8000/api/v1/results/exams/${examId}/results`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/results/exams/${examId}/results`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) setResults(await res.json());
@@ -41,7 +42,7 @@ export default function FacultyResultsDashboard() {
     const fetchExams = async () => {
       try {
         const token = localStorage.getItem('access_token');
-        const res = await fetch('http://localhost:8000/api/v1/faculty/exams', {
+        const res = await fetch(`${API_BASE_URL}/api/v1/faculty/exams`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (res.ok) setExams(await res.json());
@@ -61,7 +62,7 @@ export default function FacultyResultsDashboard() {
   const executePublish = async (vivaRunId: number, publish: boolean, publishGrades: boolean = true) => {
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://localhost:8000/api/v1/results/${vivaRunId}/publish`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/results/${vivaRunId}/publish`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ publish, publish_grades: publishGrades })
@@ -86,7 +87,7 @@ export default function FacultyResultsDashboard() {
       const token = localStorage.getItem('access_token');
       for (const r of results) {
         if (!r.is_published && r.status === 'completed') {
-          await fetch(`http://localhost:8000/api/v1/results/${r.viva_run_id}/publish`, {
+          await fetch(`${API_BASE_URL}/api/v1/results/${r.viva_run_id}/publish`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ publish: true, publish_grades: publishGrades })
@@ -106,7 +107,7 @@ export default function FacultyResultsDashboard() {
     setIsGeneratingReport(true);
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://localhost:8000/api/v1/results/${vivaRunId}/generate-report`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/results/${vivaRunId}/generate-report`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -137,7 +138,7 @@ export default function FacultyResultsDashboard() {
   const saveOverride = async (newScore: number, newGrade: string, remarks?: string) => {
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://localhost:8000/api/v1/results/${auditingStudent.viva_run_id}/override`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/results/${auditingStudent.viva_run_id}/override`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ new_score: newScore, new_grade: newGrade, faculty_remarks: remarks })
@@ -278,7 +279,7 @@ export default function FacultyResultsDashboard() {
                               onClick={async () => {
                                 const token = localStorage.getItem('access_token');
                                 try {
-                                  const res = await fetch(`http://localhost:8000/api/v1/results/${r.viva_run_id}/transcript/download`, {
+                                  const res = await fetch(`${API_BASE_URL}/api/v1/results/${r.viva_run_id}/transcript/download`, {
                                     headers: { 'Authorization': `Bearer ${token}` }
                                   });
                                   if (res.ok) {
@@ -480,7 +481,7 @@ export default function FacultyResultsDashboard() {
                   onClick={async () => {
                     try {
                       const token = localStorage.getItem('access_token');
-                      const res = await fetch(`http://localhost:8000/api/v1/results/${auditingStudent.viva_run_id}/audio/download`, {
+                      const res = await fetch(`${API_BASE_URL}/api/v1/results/${auditingStudent.viva_run_id}/audio/download`, {
                         headers: { 'Authorization': `Bearer ${token}` }
                       });
                       if (!res.ok) {
@@ -580,7 +581,7 @@ export default function FacultyResultsDashboard() {
                               </span>
                               <audio
                                 controls
-                                src={`http://localhost:8000/api/v1/results/answers/${ans.id}/audio`}
+                                src={`${API_BASE_URL}/api/v1/results/answers/${ans.id}/audio`}
                                 className="h-8 w-full sm:w-64 accent-primary"
                               />
                             </div>

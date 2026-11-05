@@ -1,4 +1,6 @@
 'use client';
+import { API_BASE_URL } from '@/lib/api';
+import { useToast } from '@/components/Toast';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
@@ -6,6 +8,7 @@ import { User, CheckCircle2, AlertCircle, Clock, Mic, MicOff, RefreshCw, X, Play
 
 export default function LiveVivaDashboard() {
   const router = useRouter();
+  const toast = useToast();
   const [exams, setExams] = useState<any[]>([]);
   const [selectedExamId, setSelectedExamId] = useState('');
   const [examMode, setExamMode] = useState('ppt_only');
@@ -58,11 +61,62 @@ export default function LiveVivaDashboard() {
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
+  // Real-time Audio Level Visualizer
+  const [audioLevel, setAudioLevel] = useState<number>(0);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animFrameRef = useRef<number | null>(null);
+
+  const stopAudioVisualizer = useCallback(() => {
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      try { audioContextRef.current.close(); } catch (e) {}
+      audioContextRef.current = null;
+    }
+    analyserRef.current = null;
+    setAudioLevel(0);
+  }, []);
+
+  const startAudioVisualizer = (stream: MediaStream) => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const audioCtx = new AudioCtx();
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 64;
+      analyser.smoothingTimeConstant = 0.8;
+      const source = audioCtx.createMediaStreamSource(stream);
+      source.connect(analyser);
+      audioContextRef.current = audioCtx;
+      analyserRef.current = analyser;
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const updateVolume = () => {
+        if (!isRecordingRef.current) {
+          setAudioLevel(0);
+          return;
+        }
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+        const avg = sum / dataArray.length;
+        setAudioLevel(Math.min(100, Math.round((avg / 128) * 100)));
+        animFrameRef.current = requestAnimationFrame(updateVolume);
+      };
+      animFrameRef.current = requestAnimationFrame(updateVolume);
+    } catch (err) {
+      console.warn("Could not start audio visualizer:", err);
+    }
+  };
+
   const fetchExams = async () => {
     try {
       const token = localStorage.getItem('access_token');
       if (!token) return router.push('/auth/login');
-      const res = await fetch('http://localhost:8000/api/v1/faculty/exams', {
+      const res = await fetch(`${API_BASE_URL}/api/v1/faculty/exams`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -86,7 +140,7 @@ export default function LiveVivaDashboard() {
       setLoadingEstimate(true);
       try {
         const token = localStorage.getItem('access_token');
-        const res = await fetch(`http://localhost:8000/api/v1/faculty/exams/${selectedExamId}/token-estimate`, {
+        const res = await fetch(`${API_BASE_URL}/api/v1/faculty/exams/${selectedExamId}/token-estimate`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (res.ok) {
@@ -157,6 +211,7 @@ export default function LiveVivaDashboard() {
     }
 
     return () => {
+      stopAudioVisualizer();
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch (e) {}
       }
@@ -202,7 +257,7 @@ export default function LiveVivaDashboard() {
     setLoadingRoster(true);
     try {
       const token = localStorage.getItem('access_token');
-      const rosterRes = await fetch(`http://localhost:8000/api/v1/viva/runs/${runId}/roster`, {
+      const rosterRes = await fetch(`${API_BASE_URL}/api/v1/viva/runs/${runId}/roster`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (rosterRes.ok) {
@@ -216,12 +271,15 @@ export default function LiveVivaDashboard() {
   };
 
   const handleStartExamRun = async () => {
-    if (!selectedExamId) return alert('Please select an exam first');
+    if (!selectedExamId) {
+      toast.error('Please select an exam first');
+      return;
+    }
     
     try {
       const token = localStorage.getItem('access_token');
       const selectedExam = exams.find((e: any) => String(e.id) === String(selectedExamId));
-      const startRes = await fetch('http://localhost:8000/api/v1/viva/runs', {
+      const startRes = await fetch(`${API_BASE_URL}/api/v1/viva/runs`, {
         method: 'POST',
         headers: { 
           'Authorization': `Bearer ${token}`,
@@ -241,8 +299,9 @@ export default function LiveVivaDashboard() {
       setQuestionsPerStudent(startData.questions_per_student || selectedExam?.questions_per_student || 5);
       setTimerPerQuestion(startData.timer_per_question_minutes || selectedExam?.timer_per_question_minutes || 1.0);
       await fetchRoster(runId);
+      toast.success('Exam session initialized successfully.');
     } catch (err: any) {
-      alert("Error starting exam run: " + err.message);
+      toast.error("Error starting exam run: " + err.message);
     }
   };
 
@@ -266,14 +325,14 @@ export default function LiveVivaDashboard() {
       
       // 1. Start the student viva - backend assigns random questions
       const startStudentRes = await fetch(
-        `http://localhost:8000/api/v1/viva/runs/${activeRunId}/students/${verifyingStudent.student_id}/start`,
+        `${API_BASE_URL}/api/v1/viva/runs/${activeRunId}/students/${verifyingStudent.student_id}/start`,
         { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } }
       );
       const startStudentData = await startStudentRes.json();
 
       // 2. Fetch this student's assigned questions
       const qRes = await fetch(
-        `http://localhost:8000/api/v1/viva/runs/${activeRunId}/questions?student_id=${verifyingStudent.student_id}`,
+        `${API_BASE_URL}/api/v1/viva/runs/${activeRunId}/questions?student_id=${verifyingStudent.student_id}`,
         { headers: { 'Authorization': `Bearer ${token}` } }
       );
       let qData = await qRes.json();
@@ -281,7 +340,7 @@ export default function LiveVivaDashboard() {
       if (!Array.isArray(qData) || qData.length === 0) {
         // Fallback: generate on the fly
         const genRes = await fetch(
-          `http://localhost:8000/api/v1/viva/runs/${activeRunId}/generate-question`,
+          `${API_BASE_URL}/api/v1/viva/runs/${activeRunId}/generate-question`,
           { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } }
         );
         const newQ = await genRes.json();
@@ -309,7 +368,7 @@ export default function LiveVivaDashboard() {
         s.student_id === verifyingStudent.student_id ? { ...s, status: 'in_progress' } : s
       ));
     } catch (err: any) {
-      alert("Error starting viva for student: " + err.message);
+      toast.error("Error starting viva for student: " + err.message);
     }
   };
 
@@ -325,7 +384,7 @@ export default function LiveVivaDashboard() {
       if (currentQ?.id) params.append('old_question_id', String(currentQ.id));
       const qStr = params.toString() ? `?${params.toString()}` : '';
 
-      const res = await fetch(`http://localhost:8000/api/v1/viva/runs/${activeRunId}/generate-question${qStr}`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/viva/runs/${activeRunId}/generate-question${qStr}`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -355,6 +414,7 @@ export default function LiveVivaDashboard() {
     if (isRecording) {
       isRecordingRef.current = false;
       setIsRecording(false);
+      stopAudioVisualizer();
       if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch (e) {} }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         try { mediaRecorderRef.current.stop(); } catch (e) {}
@@ -369,11 +429,12 @@ export default function LiveVivaDashboard() {
       setGradingScore(null);
       audioChunksRef.current = [];
 
-      // Start MediaRecorder audio capture
+      // Start MediaRecorder audio capture & real-time visualizer
       try {
         if (!mediaStreamRef.current || !mediaStreamRef.current.active) {
           mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
         }
+        startAudioVisualizer(mediaStreamRef.current);
         const recorder = new MediaRecorder(mediaStreamRef.current, { mimeType: 'audio/webm' });
         recorder.ondataavailable = (e) => {
           if (e.data.size > 0) audioChunksRef.current.push(e.data);
@@ -395,13 +456,14 @@ export default function LiveVivaDashboard() {
   };
 
   const handleEvaluateAnswer = async () => {
-    if (!transcript.trim()) { alert("Please provide an answer before evaluating."); return; }
+    if (!transcript.trim()) { toast.info("Please provide an answer before evaluating."); return; }
     const currentQ = questions[currentQuestionIndex];
     if (!currentQ || !activeRunId || !activeStudentId) return;
 
     if (isRecording) {
       isRecordingRef.current = false;
       setIsRecording(false);
+      stopAudioVisualizer();
       if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch (e) {} }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         try { mediaRecorderRef.current.stop(); } catch (e) {}
@@ -434,7 +496,7 @@ export default function LiveVivaDashboard() {
     try {
       const token = localStorage.getItem('access_token');
       const res = await fetch(
-        `http://localhost:8000/api/v1/viva/runs/${activeRunId}/students/${activeStudentId}/answers`,
+        `${API_BASE_URL}/api/v1/viva/runs/${activeRunId}/students/${activeStudentId}/answers`,
         {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -460,6 +522,7 @@ export default function LiveVivaDashboard() {
 
   const handleNextQuestion = () => {
     stopTimer();
+    stopAudioVisualizer();
     audioChunksRef.current = [];
     isRecordingRef.current = false;
     setIsRecording(false);
@@ -483,19 +546,19 @@ export default function LiveVivaDashboard() {
     stopTimer();
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://localhost:8000/api/v1/viva/viva/${activeVivaRunId}/finish`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/viva/viva/${activeVivaRunId}/finish`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
-      alert(`Student viva completed!\nTotal Score: ${data.total_score}%\nGrade: ${data.grade}`);
+      toast.success(`Student viva completed!\nTotal Score: ${data.total_score}%\nGrade: ${data.grade}`);
       
       if (activeRunId) await fetchRoster(activeRunId);
       setActiveStudentId(null);
       setActiveVivaRunId(null);
       setQuestions([]);
     } catch (err: any) {
-      alert("Error finishing viva: " + err.message);
+      toast.error("Error finishing viva: " + err.message);
     }
   };
 
@@ -519,7 +582,7 @@ export default function LiveVivaDashboard() {
 
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://localhost:8000/api/v1/viva/runs/${activeRunId}/students/${activeStudentId}/pause`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/viva/runs/${activeRunId}/students/${activeStudentId}/pause`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -527,13 +590,13 @@ export default function LiveVivaDashboard() {
         const errData = await res.json().catch(() => ({ detail: "Failed to pause viva" }));
         throw new Error(errData.detail || "Failed to pause viva");
       }
-      alert("Viva session paused.");
+      toast.info("Viva session paused.");
       await fetchRoster(activeRunId);
       setActiveStudentId(null);
       setActiveVivaRunId(null);
       setQuestions([]);
     } catch (err: any) {
-      alert("Error pausing viva: " + err.message);
+      toast.error("Error pausing viva: " + err.message);
     } finally {
       setIsPausing(false);
     }
@@ -544,7 +607,7 @@ export default function LiveVivaDashboard() {
     setRevivaLoading(vivaRunId);
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://localhost:8000/api/v1/viva/viva/${vivaRunId}/re-viva`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/viva/viva/${vivaRunId}/re-viva`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -552,10 +615,10 @@ export default function LiveVivaDashboard() {
         const errData = await res.json();
         throw new Error(errData.detail || "Re-Viva reset failed");
       }
-      alert("Re-Viva initiated! Student's viva has been reset with a new set of questions.");
+      toast.success("Re-Viva initiated! Student's viva has been reset with a new set of questions.");
       if (activeRunId) await fetchRoster(activeRunId);
     } catch (err: any) {
-      alert("Error: " + err.message);
+      toast.error("Error: " + err.message);
     } finally {
       setRevivaLoading(null);
     }
@@ -567,7 +630,7 @@ export default function LiveVivaDashboard() {
     setFinishingExam(true);
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://localhost:8000/api/v1/viva/runs/${activeRunId}/finish`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/viva/runs/${activeRunId}/finish`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -578,13 +641,13 @@ export default function LiveVivaDashboard() {
       const data = await res.json();
       const consumed = (data.tokens_consumed ?? 0).toLocaleString();
       const reclaimed = (data.tokens_reclaimed ?? 0).toLocaleString();
-      alert(`Exam Session Concluded!\n\nTokens Consumed: ${consumed}\nTokens Reclaimed to Pool: ${reclaimed}\n\nZero-Waste Guarantee: Unspent tokens from absent students or skipped questions have been refunded.`);
+      toast.success(`Exam Session Concluded!\nTokens Consumed: ${consumed}\nTokens Reclaimed to Pool: ${reclaimed}\nZero-Waste Guarantee: Unspent tokens have been refunded.`);
       setActiveRunId(null);
       setRoster([]);
       setSelectedExamId('');
       setTokenEstimate(null);
     } catch (err: any) {
-      alert("Error concluding exam: " + err.message);
+      toast.error("Error concluding exam: " + err.message);
     } finally {
       setFinishingExam(false);
     }
@@ -679,10 +742,27 @@ export default function LiveVivaDashboard() {
                     <span className="font-bold text-xs tracking-wider">{isRecording ? 'STOP' : 'SPEAK'}</span>
                   </div>
                 </button>
-                <div className="text-center">
+                <div className="text-center flex flex-col items-center gap-2">
                   <p className="text-xs text-muted-foreground font-semibold tracking-wider uppercase">
                     {isRecording ? 'Listening for speech...' : 'Click to Speak (or Type below)'}
                   </p>
+                  {isRecording && (
+                    <div className="flex items-center gap-1.5 h-6 px-3 py-1 bg-rose-500/10 border border-rose-500/20 rounded-md">
+                      {[0.4, 0.7, 1.0, 0.8, 0.5, 0.9, 0.6].map((multiplier, i) => {
+                        const h = Math.max(3, Math.min(18, Math.round((audioLevel * multiplier) / 3)));
+                        return (
+                          <span
+                            key={i}
+                            className="w-1 bg-rose-500 rounded-sm transition-all duration-75"
+                            style={{ height: `${h}px` }}
+                          />
+                        );
+                      })}
+                      <span className="text-[10px] font-mono text-rose-600 dark:text-rose-400 font-semibold ml-1.5">
+                        {audioLevel > 5 ? `${audioLevel}% Input` : 'Mic Active'}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

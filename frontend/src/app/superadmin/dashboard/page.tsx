@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from '@/lib/api';
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -22,7 +23,7 @@ export default function SuperadminDashboard() {
 
     const fetchStats = async () => {
       try {
-        const res = await fetch("http://localhost:8000/api/v1/admin/analytics", {
+        const res = await fetch(`${API_BASE_URL}/api/v1/admin/analytics`, {
           headers: { "Authorization": `Bearer ${token}` }
         });
         if (res.status === 401) {

@@ -366,8 +366,39 @@ async def generate_viva_question(
     exam = await db.get(Exam, run.exam_id)
     
     existing_q_res = await db.execute(select(ExamQuestion).where(ExamQuestion.exam_id == exam.id))
-    prev_questions = [q.question_text for q in existing_q_res.scalars().all()]
-    
+    all_existing_questions = existing_q_res.scalars().all()
+    prev_questions = [q.question_text for q in all_existing_questions]
+
+    # 1. Fast path: Check if there are unused questions in the existing question pool
+    if student_id:
+        sr_res = await db.execute(select(StudentVivaRun).where(
+            StudentVivaRun.exam_run_id == run_id,
+            StudentVivaRun.student_id == student_id
+        ))
+        sr = sr_res.scalars().first()
+        if sr and sr.assigned_question_ids:
+            cur_ids = [x.strip() for x in sr.assigned_question_ids.split(",") if x.strip()]
+            cur_int_ids = {int(x) for x in cur_ids if x.isdigit()}
+            
+            # Find pool questions not currently assigned to this student
+            unused = [q for q in all_existing_questions if q.id not in cur_int_ids and (old_question_id is None or q.id != old_question_id)]
+            if unused:
+                chosen = random.choice(unused)
+                if old_question_id and str(old_question_id) in cur_ids:
+                    idx = cur_ids.index(str(old_question_id))
+                    cur_ids[idx] = str(chosen.id)
+                else:
+                    cur_ids.append(str(chosen.id))
+                sr.assigned_question_ids = ",".join(cur_ids)
+                await db.commit()
+                return {
+                    "id": chosen.id,
+                    "question_text": chosen.question_text,
+                    "expected_answer": chosen.expected_answer,
+                    "source": "pool"
+                }
+
+    # 2. Dynamic generation path: If pool is exhausted or student has no assigned questions
     resv_id = await get_active_reservation_id(db, exam.id)
     new_q_data = await generate_single_question(
         exam.subject_name, 
@@ -403,7 +434,7 @@ async def generate_viva_question(
     await db.commit()
     await db.refresh(eq)
     
-    return {"id": eq.id, "question_text": eq.question_text, "expected_answer": eq.expected_answer}
+    return {"id": eq.id, "question_text": eq.question_text, "expected_answer": eq.expected_answer, "source": "generated"}
 
 
 @router.post("/runs/{run_id}/students/{student_id}/answers", dependencies=[Depends(require_roles([RoleEnum.FACULTY, RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
