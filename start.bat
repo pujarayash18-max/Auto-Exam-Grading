@@ -41,7 +41,11 @@ echo.
 echo ========================================================
 echo   Application URLs:
 echo   - Frontend Portal:    http://localhost:3000
+echo   - Reverse Proxy:      http://localhost (Port 80)
 echo   - Backend API Docs:   http://localhost:8000/docs
 echo   - YouPI Payment API:  http://localhost:6100
 echo   - YouPI Checkout:     http://localhost:7000
+echo.
+echo   For Remote Mobile / Public HTTPS Testing:
+echo   Run "start-tunnel.bat" to launch the Cloudflare tunnel
 echo ========================================================
