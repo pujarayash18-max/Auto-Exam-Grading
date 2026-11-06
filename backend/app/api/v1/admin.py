@@ -1,21 +1,138 @@
 import io
+import csv
+import time
 import pandas as pd
-from typing import Optional
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+from typing import Optional, List, Dict, Any
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Response, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func, text, or_, desc
 from argon2 import PasswordHasher
 import secrets
 import httpx
+import redis.asyncio as aioredis
 from app.core.config import settings
 
 from app.api.deps import get_db, require_roles, get_current_user
 from app.models.user import User, RoleEnum, LoginAlias
 from app.models.profile import Department, Class, FacultyProfile, FacultySubject, FacultyAssignment, StudentProfile, StudentSubject
+from app.models.exam import Exam
+from app.models.viva import StudentVivaRun, ExamRun, StudentVivaStatus
+from app.models.mcq import MCQExam, MCQStudentAttempt, MCQAttemptStatus
+from app.models.ai_billing import AISettings
 
 router = APIRouter()
 ph = PasswordHasher()
+
+def generate_faculty_template_bytes() -> bytes:
+    df = pd.DataFrame([
+        {
+            "empID": "EMP001",
+            "Department": "Computer Engineering",
+            "Faculty-Name": "Dr. Sharma",
+            "Subject Teaching": "Data Structures",
+            "Semester": 3,
+            "Class": "EC1"
+        },
+        {
+            "empID": "EMP002",
+            "Department": "Computer Engineering",
+            "Faculty-Name": "Prof. Patel",
+            "Subject Teaching": "Database Management Systems",
+            "Semester": 4,
+            "Class": "EC2"
+        }
+    ])
+    buf = io.BytesIO()
+    df.to_excel(buf, index=False, engine='openpyxl')
+    buf.seek(0)
+    return buf.getvalue()
+
+def generate_student_template_bytes() -> bytes:
+    df = pd.DataFrame([
+        {
+            "Enrollment Number": "ENR2024001",
+            "GR Number": "GR1001",
+            "Name": "Aarav Sharma",
+            "Department": "Computer Engineering",
+            "Department ID": "CE",
+            "Semester": 3,
+            "Class": "EC1",
+            "Email": "aarav.sharma@example.edu",
+            "Subject 1": "Data Structures",
+            "Subject 2": "Discrete Mathematics"
+        },
+        {
+            "Enrollment Number": "ENR2024002",
+            "GR Number": "GR1002",
+            "Name": "Diya Patel",
+            "Department": "Computer Engineering",
+            "Department ID": "CE",
+            "Semester": 3,
+            "Class": "EC1",
+            "Email": "diya.patel@example.edu",
+            "Subject 1": "Data Structures",
+            "Subject 2": "Discrete Mathematics"
+        }
+    ])
+    buf = io.BytesIO()
+    df.to_excel(buf, index=False, engine='openpyxl')
+    buf.seek(0)
+    return buf.getvalue()
+
+def generate_class_template_bytes() -> bytes:
+    df = pd.DataFrame([
+        {
+            "Department": "Computer Engineering",
+            "Department ID": "CE",
+            "Semester": 3,
+            "Class": "EC1"
+        },
+        {
+            "Department": "Computer Engineering",
+            "Department ID": "CE",
+            "Semester": 3,
+            "Class": "EC2"
+        },
+        {
+            "Department": "Electrical Engineering",
+            "Department ID": "EE",
+            "Semester": 1,
+            "Class": "EV1"
+        }
+    ])
+    buf = io.BytesIO()
+    df.to_excel(buf, index=False, engine='openpyxl')
+    buf.seek(0)
+    return buf.getvalue()
+
+@router.get("/templates/faculty", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def download_faculty_template():
+    content = generate_faculty_template_bytes()
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=Faculty_Import_Template.xlsx"}
+    )
+
+@router.get("/templates/students", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def download_student_template():
+    content = generate_student_template_bytes()
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=Student_Import_Template.xlsx"}
+    )
+
+@router.get("/templates/classes", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def download_classes_template():
+    content = generate_class_template_bytes()
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=Class_Import_Template.xlsx"}
+    )
 
 async def get_or_create_department(db: AsyncSession, dept_name: str, dept_id_code: str = None) -> Department:
     if not dept_name or pd.isna(dept_name):
@@ -471,11 +588,56 @@ async def get_analytics(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    from sqlalchemy import func
-    from app.models.viva import StudentVivaRun, ExamRun
+    from sqlalchemy import func, text
+    from app.models.viva import StudentVivaRun, ExamRun, StudentVivaStatus
     from app.models.exam import Exam
+    from app.models.mcq import MCQExam, MCQStudentAttempt, MCQAttemptStatus
+    from app.models.ai_billing import AISettings
+    import time
+    import redis.asyncio as aioredis
+    from app.core.config import settings
 
-    # Subject-wise analysis (Average Score)
+    # 1. KPIs
+    students_count = (await db.execute(select(func.count(StudentProfile.id)))).scalar() or 0
+    faculty_count = (await db.execute(select(func.count(FacultyProfile.id)))).scalar() or 0
+    classes_count = (await db.execute(select(func.count(Class.id)))).scalar() or 0
+    viva_exams_count = (await db.execute(select(func.count(Exam.id)))).scalar() or 0
+    mcq_exams_count = (await db.execute(select(func.count(MCQExam.id)))).scalar() or 0
+    total_exams_count = viva_exams_count + mcq_exams_count
+    
+    completed_viva_runs = (await db.execute(
+        select(func.count(StudentVivaRun.id)).where(StudentVivaRun.status == StudentVivaStatus.COMPLETED)
+    )).scalar() or 0
+    
+    submitted_mcq_attempts = (await db.execute(
+        select(func.count(MCQStudentAttempt.id)).where(MCQStudentAttempt.status == MCQAttemptStatus.SUBMITTED)
+    )).scalar() or 0
+    
+    active_lockouts = (await db.execute(
+        select(func.count(MCQStudentAttempt.id)).where(MCQStudentAttempt.status == MCQAttemptStatus.LOCKED_OUT)
+    )).scalar() or 0
+
+    ai_settings_res = await db.execute(select(AISettings).order_by(AISettings.id.asc()).limit(1))
+    ai_settings = ai_settings_res.scalars().first()
+    ai_token_balance = ai_settings.token_balance if ai_settings else 0
+    ai_wallet_balance = ai_settings.wallet_balance_inr if ai_settings else 0.0
+
+    kpis = {
+        "students_count": students_count,
+        "faculty_count": faculty_count,
+        "classes_count": classes_count,
+        "viva_exams_count": viva_exams_count,
+        "mcq_exams_count": mcq_exams_count,
+        "total_exams_count": total_exams_count,
+        "completed_viva_runs": completed_viva_runs,
+        "submitted_mcq_attempts": submitted_mcq_attempts,
+        "total_completed_assessments": completed_viva_runs + submitted_mcq_attempts,
+        "active_lockouts": active_lockouts,
+        "ai_token_balance": ai_token_balance,
+        "ai_wallet_balance": ai_wallet_balance
+    }
+
+    # 2. Subject-wise analysis (Average Score)
     subject_stats_res = await db.execute(
         select(
             Exam.subject_name,
@@ -484,7 +646,7 @@ async def get_analytics(
         )
         .join(ExamRun, Exam.id == ExamRun.exam_id)
         .join(StudentVivaRun, ExamRun.id == StudentVivaRun.exam_run_id)
-        .where(StudentVivaRun.status == "completed")
+        .where(StudentVivaRun.status == StudentVivaStatus.COMPLETED)
         .group_by(Exam.subject_name)
     )
     
@@ -492,11 +654,11 @@ async def get_analytics(
     for row in subject_stats_res.all():
         subject_stats.append({
             "subject": row.subject_name,
-            "avg_score": float(row.avg_score) if row.avg_score else 0,
+            "avg_score": round(float(row.avg_score), 2) if row.avg_score else 0,
             "total_students": row.total_students
         })
         
-    # Class-wise analysis (Average Score)
+    # 3. Class-wise analysis (Average Score)
     class_stats_res = await db.execute(
         select(
             Class.name.label('class_name'),
@@ -506,7 +668,7 @@ async def get_analytics(
         .join(Exam, Class.id == Exam.class_id)
         .join(ExamRun, Exam.id == ExamRun.exam_id)
         .join(StudentVivaRun, ExamRun.id == StudentVivaRun.exam_run_id)
-        .where(StudentVivaRun.status == "completed")
+        .where(StudentVivaRun.status == StudentVivaStatus.COMPLETED)
         .group_by(Class.name)
     )
     
@@ -514,13 +676,102 @@ async def get_analytics(
     for row in class_stats_res.all():
         class_stats.append({
             "class_name": row.class_name,
-            "avg_score": float(row.avg_score) if row.avg_score else 0,
+            "avg_score": round(float(row.avg_score), 2) if row.avg_score else 0,
             "total_students": row.total_students
         })
+
+    # 4. Recent Activity (Recent 10 events across Viva and MCQ)
+    recent_activities = []
+    recent_vivas = await db.execute(
+        select(StudentVivaRun, StudentProfile.name.label("student_name"), Exam.subject_name)
+        .join(StudentProfile, StudentVivaRun.student_id == StudentProfile.id)
+        .join(ExamRun, StudentVivaRun.exam_run_id == ExamRun.id)
+        .join(Exam, ExamRun.exam_id == Exam.id)
+        .where(StudentVivaRun.completed_at.is_not(None))
+        .order_by(desc(StudentVivaRun.completed_at))
+        .limit(5)
+    )
+    for v_run, s_name, subj in recent_vivas.all():
+        recent_activities.append({
+            "type": "viva_completed",
+            "title": f"Oral Viva Completed: {subj}",
+            "student_name": s_name,
+            "detail": f"Scored {v_run.total_score} marks (Grade {v_run.grade or 'N/A'})",
+            "timestamp": v_run.completed_at.isoformat() if v_run.completed_at else None
+        })
+
+    recent_mcqs = await db.execute(
+        select(MCQStudentAttempt, StudentProfile.name.label("student_name"), MCQExam.subject_name)
+        .join(StudentProfile, MCQStudentAttempt.student_id == StudentProfile.id)
+        .join(MCQExam, MCQStudentAttempt.mcq_exam_id == MCQExam.id)
+        .where(MCQStudentAttempt.submitted_at.is_not(None))
+        .order_by(desc(MCQStudentAttempt.submitted_at))
+        .limit(5)
+    )
+    for m_att, s_name, subj in recent_mcqs.all():
+        recent_activities.append({
+            "type": "mcq_submitted",
+            "title": f"MCQ Exam Submitted: {subj}",
+            "student_name": s_name,
+            "detail": f"Scored {m_att.score_awarded} marks ({m_att.percentage or 0}%)",
+            "timestamp": m_att.submitted_at.isoformat() if m_att.submitted_at else None
+        })
+
+    recent_lockouts = await db.execute(
+        select(MCQStudentAttempt, StudentProfile.name.label("student_name"), MCQExam.subject_name)
+        .join(StudentProfile, MCQStudentAttempt.student_id == StudentProfile.id)
+        .join(MCQExam, MCQStudentAttempt.mcq_exam_id == MCQExam.id)
+        .where(MCQStudentAttempt.lockout_count > 0)
+        .order_by(desc(MCQStudentAttempt.last_lockout_at))
+        .limit(5)
+    )
+    for l_att, s_name, subj in recent_lockouts.all():
+        recent_activities.append({
+            "type": "lockout_incident",
+            "title": f"Proctoring Alert: {subj}",
+            "student_name": s_name,
+            "detail": f"Reason: {l_att.last_lockout_reason or 'Security trigger'} (Flagged {l_att.lockout_count}x)",
+            "timestamp": l_att.last_lockout_at.isoformat() if l_att.last_lockout_at else None
+        })
+
+    # Sort combined activities by timestamp descending
+    recent_activities.sort(key=lambda x: x.get("timestamp") or "", reverse=True)
+    recent_activities = recent_activities[:10]
+
+    # 5. Live Service Health Latencies
+    db_latency_ms = 0.0
+    db_healthy = True
+    try:
+        t0 = time.perf_counter()
+        await db.execute(text("SELECT 1"))
+        db_latency_ms = round((time.perf_counter() - t0) * 1000, 2)
+    except Exception:
+        db_healthy = False
+
+    redis_latency_ms = 0.0
+    redis_healthy = True
+    try:
+        r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        t1 = time.perf_counter()
+        await r.ping()
+        redis_latency_ms = round((time.perf_counter() - t1) * 1000, 2)
+        await r.aclose()
+    except Exception:
+        redis_healthy = False
+
+    system_health = {
+        "status": "operational" if (db_healthy and redis_healthy) else "degraded",
+        "database": {"healthy": db_healthy, "latency_ms": db_latency_ms, "name": "PostgreSQL 16"},
+        "redis": {"healthy": redis_healthy, "latency_ms": redis_latency_ms, "name": "Redis Cache & Queue"},
+        "api": {"healthy": True, "name": "FastAPI Core"}
+    }
         
     return {
+        "kpis": kpis,
         "subject_wise": subject_stats,
-        "class_wise": class_stats
+        "class_wise": class_stats,
+        "recent_activity": recent_activities,
+        "system_health": system_health
     }
 
 @router.get("/faculties", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
@@ -833,4 +1084,284 @@ async def delete_student(student_id: int, db: AsyncSession = Depends(get_db)):
     await db.execute(delete(User).where(User.id == prof.user_id))
     await db.commit()
     return {"msg": "Student deleted successfully"}
+
+# -------------------------------------------------------------
+# System Health Ping
+# -------------------------------------------------------------
+@router.get("/system-health", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def get_system_health(db: AsyncSession = Depends(get_db)):
+    db_start = time.perf_counter()
+    db_healthy = True
+    try:
+        await db.execute(text("SELECT 1"))
+        db_ms = round((time.perf_counter() - db_start) * 1000, 2)
+    except Exception:
+        db_healthy = False
+        db_ms = -1
+
+    redis_start = time.perf_counter()
+    redis_healthy = True
+    try:
+        r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        await r.ping()
+        redis_ms = round((time.perf_counter() - redis_start) * 1000, 2)
+        await r.aclose()
+    except Exception:
+        redis_healthy = False
+        redis_ms = -1
+
+    return {
+        "status": "operational" if (db_healthy and redis_healthy) else "degraded",
+        "timestamp": time.time(),
+        "services": [
+            {"name": "PostgreSQL Primary", "healthy": db_healthy, "latency_ms": db_ms},
+            {"name": "Redis In-Memory Broker", "healthy": redis_healthy, "latency_ms": redis_ms},
+            {"name": "FastAPI App Server", "healthy": True, "latency_ms": 1.0}
+        ]
+    }
+
+# -------------------------------------------------------------
+# Master Gradebook & Accreditation Exports
+# -------------------------------------------------------------
+@router.get("/master-results", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def get_master_results(
+    search: Optional[str] = None,
+    class_id: Optional[int] = None,
+    assessment_type: Optional[str] = None, # "all", "viva", "mcq"
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=500),
+    db: AsyncSession = Depends(get_db)
+):
+    results = []
+    
+    # 1. Fetch Viva Results
+    if not assessment_type or assessment_type in ("all", "viva"):
+        viva_q = (
+            select(
+                StudentVivaRun,
+                StudentProfile.name.label("student_name"),
+                StudentProfile.enrollment_number,
+                StudentProfile.gr_number,
+                Department.name.label("department_name"),
+                Class.name.label("class_name"),
+                Class.id.label("class_id"),
+                Exam.subject_name,
+                Exam.total_marks
+            )
+            .join(StudentProfile, StudentVivaRun.student_id == StudentProfile.id)
+            .join(ExamRun, StudentVivaRun.exam_run_id == ExamRun.id)
+            .join(Exam, ExamRun.exam_id == Exam.id)
+            .outerjoin(Class, StudentProfile.class_id == Class.id)
+            .outerjoin(Department, StudentProfile.department_id == Department.id)
+            .where(StudentVivaRun.status == StudentVivaStatus.COMPLETED)
+        )
+        if class_id:
+            viva_q = viva_q.where(Class.id == class_id)
+        if search:
+            s_clean = f"%{search.strip().lower()}%"
+            viva_q = viva_q.where(
+                or_(
+                    func.lower(StudentProfile.name).like(s_clean),
+                    func.lower(StudentProfile.enrollment_number).like(s_clean),
+                    func.lower(Exam.subject_name).like(s_clean)
+                )
+            )
+        
+        v_res = await db.execute(viva_q)
+        for v_run, s_name, enr, gr, dept, cls_name, cls_id, subj, max_m in v_res.all():
+            total_m = max_m or 100.0
+            score = v_run.total_score or 0.0
+            pct = round((score / total_m) * 100, 2) if total_m > 0 else 0.0
+            results.append({
+                "id": f"viva_{v_run.id}",
+                "assessment_type": "Oral Viva",
+                "student_name": s_name,
+                "enrollment_number": enr,
+                "gr_number": gr,
+                "department": dept or "General",
+                "class_name": cls_name or "N/A",
+                "subject": subj,
+                "score": score,
+                "max_marks": total_m,
+                "percentage": pct,
+                "grade": v_run.grade or ("A" if pct >= 80 else ("B" if pct >= 60 else "C")),
+                "completed_at": v_run.completed_at.isoformat() if v_run.completed_at else None
+            })
+
+    # 2. Fetch MCQ Results
+    if not assessment_type or assessment_type in ("all", "mcq"):
+        mcq_q = (
+            select(
+                MCQStudentAttempt,
+                StudentProfile.name.label("student_name"),
+                StudentProfile.enrollment_number,
+                StudentProfile.gr_number,
+                Department.name.label("department_name"),
+                Class.name.label("class_name"),
+                Class.id.label("class_id"),
+                MCQExam.subject_name,
+                MCQExam.total_marks
+            )
+            .join(StudentProfile, MCQStudentAttempt.student_id == StudentProfile.id)
+            .join(MCQExam, MCQStudentAttempt.mcq_exam_id == MCQExam.id)
+            .outerjoin(Class, StudentProfile.class_id == Class.id)
+            .outerjoin(Department, StudentProfile.department_id == Department.id)
+            .where(MCQStudentAttempt.status == MCQAttemptStatus.SUBMITTED)
+        )
+        if class_id:
+            mcq_q = mcq_q.where(Class.id == class_id)
+        if search:
+            s_clean = f"%{search.strip().lower()}%"
+            mcq_q = mcq_q.where(
+                or_(
+                    func.lower(StudentProfile.name).like(s_clean),
+                    func.lower(StudentProfile.enrollment_number).like(s_clean),
+                    func.lower(MCQExam.subject_name).like(s_clean)
+                )
+            )
+
+        m_res = await db.execute(mcq_q)
+        for m_att, s_name, enr, gr, dept, cls_name, cls_id, subj, max_m in m_res.all():
+            total_m = max_m or 100.0
+            score = m_att.score_awarded or 0.0
+            pct = m_att.percentage or (round((score / total_m) * 100, 2) if total_m > 0 else 0.0)
+            results.append({
+                "id": f"mcq_{m_att.id}",
+                "assessment_type": "Objective MCQ",
+                "student_name": s_name,
+                "enrollment_number": enr,
+                "gr_number": gr,
+                "department": dept or "General",
+                "class_name": cls_name or "N/A",
+                "subject": subj,
+                "score": score,
+                "max_marks": total_m,
+                "percentage": pct,
+                "grade": m_att.grade or ("A" if pct >= 80 else ("B" if pct >= 60 else "C")),
+                "completed_at": m_att.submitted_at.isoformat() if m_att.submitted_at else None
+            })
+
+    # Sort by completed_at desc
+    results.sort(key=lambda r: r.get("completed_at") or "", reverse=True)
+    
+    total_count = len(results)
+    start_idx = (page - 1) * limit
+    paged_results = results[start_idx:start_idx + limit]
+
+    return {
+        "total": total_count,
+        "page": page,
+        "limit": limit,
+        "results": paged_results
+    }
+
+@router.get("/master-results/export-csv", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def export_master_results_csv(
+    class_id: Optional[int] = None,
+    assessment_type: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    # Fetch all records without pagination
+    data_response = await get_master_results(
+        class_id=class_id,
+        assessment_type=assessment_type,
+        page=1,
+        limit=5000,
+        db=db
+    )
+    records = data_response.get("results", [])
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Student Name",
+        "Enrollment Number",
+        "GR Number",
+        "Department",
+        "Class",
+        "Assessment Type",
+        "Subject / Examination",
+        "Score Obtained",
+        "Maximum Marks",
+        "Percentage (%)",
+        "Grade",
+        "Completion Date & Time"
+    ])
+
+    for r in records:
+        writer.writerow([
+            r.get("student_name", ""),
+            r.get("enrollment_number", ""),
+            r.get("gr_number", ""),
+            r.get("department", ""),
+            r.get("class_name", ""),
+            r.get("assessment_type", ""),
+            r.get("subject", ""),
+            r.get("score", 0),
+            r.get("max_marks", 100),
+            r.get("percentage", 0),
+            r.get("grade", ""),
+            r.get("completed_at", "")
+        ])
+
+    output.seek(0)
+    csv_bytes = output.getvalue().encode("utf-8")
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=Master_Examination_Accreditation_Report.csv"}
+    )
+
+# -------------------------------------------------------------
+# Anti-Cheat & Lockout Audit Feed
+# -------------------------------------------------------------
+@router.get("/anti-cheat/incidents", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def list_anti_cheat_incidents(db: AsyncSession = Depends(get_db)):
+    q = (
+        select(
+            MCQStudentAttempt,
+            StudentProfile.name.label("student_name"),
+            StudentProfile.enrollment_number,
+            Class.name.label("class_name"),
+            MCQExam.subject_name
+        )
+        .join(StudentProfile, MCQStudentAttempt.student_id == StudentProfile.id)
+        .join(MCQExam, MCQStudentAttempt.mcq_exam_id == MCQExam.id)
+        .outerjoin(Class, StudentProfile.class_id == Class.id)
+        .where(
+            or_(
+                MCQStudentAttempt.lockout_count > 0,
+                MCQStudentAttempt.status == MCQAttemptStatus.LOCKED_OUT
+            )
+        )
+        .order_by(desc(MCQStudentAttempt.last_lockout_at))
+    )
+    res = await db.execute(q)
+    incidents = []
+    for m_att, s_name, enr, cls_name, subj in res.all():
+        incidents.append({
+            "attempt_id": m_att.id,
+            "student_name": s_name,
+            "enrollment_number": enr,
+            "class_name": cls_name or "N/A",
+            "subject": subj,
+            "lockout_count": m_att.lockout_count,
+            "last_lockout_reason": m_att.last_lockout_reason or "Proctoring threshold exceeded",
+            "last_lockout_at": m_att.last_lockout_at.isoformat() if m_att.last_lockout_at else None,
+            "status": m_att.status.value if hasattr(m_att.status, "value") else str(m_att.status),
+            "faculty_approved": m_att.faculty_approved
+        })
+    return incidents
+
+@router.post("/anti-cheat/approve-reentry/{attempt_id}", dependencies=[Depends(require_roles([RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def approve_student_reentry(attempt_id: int, db: AsyncSession = Depends(get_db)):
+    attempt = await db.get(MCQStudentAttempt, attempt_id)
+    if not attempt:
+        raise HTTPException(status_code=404, detail="Exam attempt not found")
+    
+    attempt.status = MCQAttemptStatus.IN_PROGRESS
+    attempt.faculty_approved = True
+    await db.commit()
+    return {"msg": f"Re-entry approved. Student may now resume the exam.", "attempt_id": attempt_id}
+
 

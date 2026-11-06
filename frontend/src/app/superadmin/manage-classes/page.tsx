@@ -4,7 +4,7 @@ import { API_BASE_URL } from '@/lib/api';
 import { useState, useEffect } from "react";
 import SuperAdminSidebar from "@/components/layout/SuperAdminSidebar";
 import { useRouter } from "next/navigation";
-import { UploadCloud, Trash2 } from "lucide-react";
+import { UploadCloud, Trash2, Download } from "lucide-react";
 
 export default function ManageClasses() {
   const router = useRouter();
@@ -146,10 +146,20 @@ export default function ManageClasses() {
 
             {/* Upload Section */}
             <div className="glass-panel p-6">
-              <h3 className="text-xl font-semibold mb-6 flex items-center text-foreground">
-                <UploadCloud className="w-5 h-5 mr-3 text-primary" />
-                Upload Classes Excel/CSV
-              </h3>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+                <h3 className="text-xl font-semibold flex items-center text-foreground">
+                  <UploadCloud className="w-5 h-5 mr-3 text-primary" />
+                  Upload Classes Excel/CSV
+                </h3>
+                <a
+                  href={`${API_BASE_URL}/api/v1/admin/templates/classes`}
+                  download="Class_Import_Template.xlsx"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-border bg-muted text-foreground hover:bg-muted/80 transition cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5 text-blue-500" />
+                  Download Sample Template (.xlsx)
+                </a>
+              </div>
               
               <form onSubmit={handleUpload} className="flex flex-col md:flex-row gap-4 items-end">
                 <div className="flex-1 w-full">

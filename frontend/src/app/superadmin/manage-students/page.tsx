@@ -4,7 +4,7 @@ import { API_BASE_URL } from '@/lib/api';
 import { useState, useEffect } from "react";
 import SuperAdminSidebar from "@/components/layout/SuperAdminSidebar";
 import { useRouter } from "next/navigation";
-import { UploadCloud, Trash2, KeyRound, Mail, Search, Pencil, X, Save } from "lucide-react";
+import { UploadCloud, Trash2, KeyRound, Mail, Search, Pencil, X, Save, Download, ChevronLeft, ChevronRight } from "lucide-react";
 
 export default function ManageStudents() {
   const router = useRouter();
@@ -17,6 +17,8 @@ export default function ManageStudents() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const pageSize = 25;
 
   // Edit Modal State
   const [editingStudent, setEditingStudent] = useState<any | null>(null);
@@ -298,6 +300,9 @@ export default function ManageStudents() {
     s.email?.toLowerCase().includes(search.toLowerCase())
   );
 
+  const totalPages = Math.ceil(filteredStudents.length / pageSize) || 1;
+  const paginatedStudents = filteredStudents.slice((page - 1) * pageSize, page * pageSize);
+
   return (
     <div className="flex h-screen bg-background text-foreground selection:bg-primary/30 overflow-hidden transition-colors duration-200">
       <SuperAdminSidebar />
@@ -351,10 +356,20 @@ export default function ManageStudents() {
 
             {/* Upload Section */}
             <div className="glass-panel p-6 rounded-2xl">
-              <h3 className="text-xl font-semibold mb-6 flex items-center text-foreground">
-                <UploadCloud className="w-5 h-5 mr-3 text-primary" />
-                Upload Students Excel/CSV
-              </h3>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+                <h3 className="text-xl font-semibold flex items-center text-foreground">
+                  <UploadCloud className="w-5 h-5 mr-3 text-primary" />
+                  Upload Students Excel/CSV
+                </h3>
+                <a
+                  href={`${API_BASE_URL}/api/v1/admin/templates/students`}
+                  download="Student_Import_Template.xlsx"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-border bg-muted text-foreground hover:bg-muted/80 transition cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5 text-blue-500" />
+                  Download Sample Template (.xlsx)
+                </a>
+              </div>
               
               <form onSubmit={handleUpload} className="flex flex-col md:flex-row gap-4 items-end">
                 <div className="flex-1 w-full">
@@ -420,7 +435,7 @@ export default function ManageStudents() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {filteredStudents.map((student) => (
+                    {paginatedStudents.map((student) => (
                       <tr key={student.id} className="hover:bg-muted/50 transition-colors">
                         <td className="px-6 py-4">
                           <div className="font-medium text-foreground">{student.name}</div>
@@ -499,6 +514,36 @@ export default function ManageStudents() {
                     )}
                   </tbody>
                 </table>
+              </div>
+
+              {/* Pagination Controls */}
+              <div className="p-3.5 border-t border-border flex items-center justify-between text-xs text-muted-foreground mt-4">
+                <div>
+                  Showing {paginatedStudents.length} of {filteredStudents.length} students
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page <= 1}
+                    className="p-1 rounded-md border border-border hover:bg-muted disabled:opacity-40 transition"
+                    aria-label="Previous page"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="px-2 font-medium text-foreground">
+                    Page {page} of {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                    className="p-1 rounded-md border border-border hover:bg-muted disabled:opacity-40 transition"
+                    aria-label="Next page"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             </div>
 

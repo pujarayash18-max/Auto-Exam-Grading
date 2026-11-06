@@ -12,3 +12,4 @@ echo ========================================================
 echo.
 "%~dp0tools\cloudflared.exe" tunnel --url http://localhost:80
 pause
+

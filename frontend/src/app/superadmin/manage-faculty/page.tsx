@@ -4,7 +4,7 @@ import { API_BASE_URL } from '@/lib/api';
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import SuperAdminSidebar from "@/components/layout/SuperAdminSidebar";
-import { UploadCloud, Trash2, KeyRound, Mail, AlertCircle, CheckCircle2, X, Pencil, Save } from "lucide-react";
+import { UploadCloud, Trash2, KeyRound, Mail, AlertCircle, CheckCircle2, X, Pencil, Save, Download, Search, ChevronLeft, ChevronRight } from "lucide-react";
 
 interface FacultyItem {
   id: number;
@@ -30,6 +30,9 @@ export default function ManageFacultyPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
 
   // Edit Modal State
   const [editingFaculty, setEditingFaculty] = useState<FacultyItem | null>(null);
@@ -281,6 +284,19 @@ export default function ManageFacultyPage() {
     }
   };
 
+  const filteredFaculties = faculties.filter((f) => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return (
+      (f.name && f.name.toLowerCase().includes(q)) ||
+      (f.emp_id && f.emp_id.toLowerCase().includes(q)) ||
+      (f.email && f.email.toLowerCase().includes(q)) ||
+      (f.department && f.department.toLowerCase().includes(q))
+    );
+  });
+  const totalPages = Math.ceil(filteredFaculties.length / pageSize) || 1;
+  const paginatedFaculties = filteredFaculties.slice((page - 1) * pageSize, page * pageSize);
+
   return (
     <div className="flex h-screen bg-[var(--bg)] text-[var(--text)] overflow-hidden">
       {/* Shared Admin Sidebar */}
@@ -336,10 +352,20 @@ export default function ManageFacultyPage() {
 
             {/* Upload Faculty Data Card */}
             <section className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-6 shadow-none">
-              <h2 className="text-base font-semibold text-[var(--text)] flex items-center gap-2.5 mb-4">
-                <UploadCloud className="w-5 h-5 text-[var(--primary)]" />
-                <span>Upload Faculty Data (Excel/CSV)</span>
-              </h2>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                <h2 className="text-base font-semibold text-[var(--text)] flex items-center gap-2.5">
+                  <UploadCloud className="w-5 h-5 text-[var(--primary)]" />
+                  <span>Upload Faculty Data (Excel/CSV)</span>
+                </h2>
+                <a
+                  href={`${API_BASE_URL}/api/v1/admin/templates/faculty`}
+                  download="Faculty_Import_Template.xlsx"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] text-[var(--text)] hover:bg-[var(--border-strong)]/20 transition cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5 text-blue-500" />
+                  Download Sample Template (.xlsx)
+                </a>
+              </div>
 
               <form onSubmit={handleUpload} className="space-y-4">
                 <div>
@@ -398,10 +424,22 @@ export default function ManageFacultyPage() {
 
             {/* Faculty List Section */}
             <section className="space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold text-[var(--text)] tracking-tight">
-                  Faculty List ({faculties.length})
-                </h2>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="flex items-center gap-4">
+                  <h2 className="text-lg font-semibold text-[var(--text)] tracking-tight">
+                    Faculty List ({filteredFaculties.length})
+                  </h2>
+                  <div className="relative w-64">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-[var(--text-muted)]" />
+                    <input
+                      type="text"
+                      value={search}
+                      onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                      placeholder="Search faculty..."
+                      className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                    />
+                  </div>
+                </div>
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
@@ -460,7 +498,7 @@ export default function ManageFacultyPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--border)]">
-                      {faculties.map((f, i) => {
+                      {paginatedFaculties.map((f, i) => {
                         const subjectsList = Array.isArray(f.subjects)
                           ? f.subjects
                           : typeof f.subjects === "string"
@@ -480,7 +518,7 @@ export default function ManageFacultyPage() {
                           >
                             {/* Sequential Index with Tabular Numbers */}
                             <td className="px-3 py-4 text-xs font-mono tabular-nums text-[var(--text-muted)] text-center">
-                              {i + 1}
+                              {(page - 1) * pageSize + i + 1}
                             </td>
 
                             {/* Employee ID with Tabular Numbers */}
@@ -612,6 +650,36 @@ export default function ManageFacultyPage() {
                       )}
                     </tbody>
                   </table>
+                </div>
+
+                {/* Pagination Controls */}
+                <div className="p-3.5 border-t border-[var(--border)] flex items-center justify-between text-xs text-[var(--text-muted)] bg-[var(--surface-muted)]/30">
+                  <div>
+                    Showing {paginatedFaculties.length} of {filteredFaculties.length} faculty members
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={page <= 1}
+                      className="p-1 rounded-md border border-[var(--border)] hover:bg-[var(--surface-muted)] disabled:opacity-40 transition"
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="px-2 font-medium text-[var(--text)]">
+                      Page {page} of {totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={page >= totalPages}
+                      className="p-1 rounded-md border border-[var(--border)] hover:bg-[var(--surface-muted)] disabled:opacity-40 transition"
+                      aria-label="Next page"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </section>

@@ -46,7 +46,7 @@ export function middleware(request: NextRequest) {
   }
   
   // Ensure role matches the route group
-  if (pathname.startsWith('/superadmin') && role !== 'superadmin') {
+  if (pathname.startsWith('/superadmin') && role !== 'superadmin' && role !== 'admin') {
     return NextResponse.redirect(new URL(`/${role}/dashboard`, request.url))
   }
   if (pathname.startsWith('/admin') && role !== 'admin' && role !== 'superadmin') {

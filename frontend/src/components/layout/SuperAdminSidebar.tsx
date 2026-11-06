@@ -15,6 +15,8 @@ import {
   CreditCard,
   Sliders,
   LogOut,
+  FileSpreadsheet,
+  ShieldAlert,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
@@ -64,6 +66,16 @@ export default function SuperAdminSidebar() {
       name: "Manage Classes",
       path: "/superadmin/manage-classes",
       icon: School,
+    },
+    {
+      name: "Master Results & CSV",
+      path: "/superadmin/results",
+      icon: FileSpreadsheet,
+    },
+    {
+      name: "Anti-Cheat Audit Feed",
+      path: "/superadmin/anti-cheat",
+      icon: ShieldAlert,
     },
     {
       name: "Faculty Module (Vivas)",
