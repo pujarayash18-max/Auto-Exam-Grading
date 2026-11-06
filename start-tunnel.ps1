@@ -45,6 +45,17 @@ if ($tunnelUrl) {
     Write-Host "=================================================================" -ForegroundColor Green
     Write-Host "[*] URL copied to clipboard!" -ForegroundColor Cyan
     try { Set-Clipboard -Value $tunnelUrl } catch {}
+
+    Write-Host "[*] Verifying Cloudflare global DNS propagation..." -ForegroundColor Gray
+    $domain = $tunnelUrl.Replace("https://", "").TrimEnd("/")
+    for ($d = 0; $d -lt 15; $d++) {
+        Start-Sleep -Seconds 1
+        try {
+            $dns = Resolve-DnsName -Name $domain -ErrorAction SilentlyContinue
+            if ($dns) { break }
+        } catch {}
+    }
+
     Write-Host "[*] Launching platform in default browser..." -ForegroundColor Cyan
     try { Start-Process $tunnelUrl } catch {}
     Write-Host ""
