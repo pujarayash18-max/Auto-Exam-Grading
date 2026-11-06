@@ -4,6 +4,7 @@ import { API_BASE_URL } from '@/lib/api';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { performLogout } from '@/lib/auth';
 import {
   User, FileText, Calendar, LogOut, Download, Sparkles, AlertCircle,
   Volume2, ListChecks, KeyRound, CheckCircle2, XCircle, ShieldAlert,
@@ -208,10 +209,7 @@ export default function StudentDashboard() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("user_role");
-    document.cookie = "refresh_token=; path=/; max-age=0";
-    router.push("/auth/login");
+    performLogout();
   };
 
   const toggleExpandRun = (runId: number) => {

@@ -20,6 +20,13 @@ export function middleware(request: NextRequest) {
   const refreshCookie = request.cookies.get('refresh_token')?.value
   const { pathname } = request.nextUrl
   const isPublicRoute = pathname === '/auth/login' || pathname === '/privacy' || pathname === '/terms'
+  const isLogout = request.nextUrl.searchParams.get('logout') === 'true' || request.nextUrl.searchParams.get('logged_out') === '1'
+
+  if (isLogout && pathname === '/auth/login') {
+    const res = NextResponse.next()
+    res.cookies.delete('refresh_token')
+    return res
+  }
   
   if (!refreshCookie) {
     if (!isPublicRoute) {

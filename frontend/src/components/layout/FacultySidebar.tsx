@@ -2,16 +2,14 @@
 
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
+import { performLogout } from "@/lib/auth";
 
 export default function FacultySidebar() {
   const router = useRouter();
   const pathname = usePathname();
 
   const handleLogout = () => {
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("user_role");
-    document.cookie = "refresh_token=; path=/; max-age=0";
-    router.push("/auth/login");
+    performLogout();
   };
 
   const navItems = [

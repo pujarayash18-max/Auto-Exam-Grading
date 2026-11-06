@@ -19,16 +19,14 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { performLogout } from "@/lib/auth";
 
 export default function SuperAdminSidebar() {
   const router = useRouter();
   const pathname = usePathname();
 
   const handleLogout = () => {
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("user_role");
-    document.cookie = "refresh_token=; path=/; max-age=0";
-    router.push("/auth/login");
+    performLogout();
   };
 
   const navItems = [

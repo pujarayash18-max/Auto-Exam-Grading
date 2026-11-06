@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { performLogout } from '@/lib/auth';
 import { LayoutDashboard, MonitorPlay, ClipboardCheck, LogOut, Coins, Zap, RotateCcw, ListChecks } from 'lucide-react';
 
 interface FacultyWallet {
@@ -52,10 +53,7 @@ export default function FacultyLayout({ children }: { children: React.ReactNode 
   }, []);
 
   const handleLogout = () => {
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("user_role");
-    document.cookie = "refresh_token=; path=/; max-age=0";
-    router.push("/auth/login");
+    performLogout();
   };
 
   const navItems = [

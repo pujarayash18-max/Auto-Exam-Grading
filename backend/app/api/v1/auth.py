@@ -126,9 +126,24 @@ async def change_password(
 async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     refresh_token = request.cookies.get("refresh_token")
     if refresh_token:
-        # We would hash and find it to revoke, but simple delete for now based on user if we had auth
-        pass
-    response.delete_cookie("refresh_token")
+        try:
+            payload = jwt.decode(refresh_token, settings.JWT_REFRESH_SECRET_KEY, algorithms=["HS256"])
+            user_id = int(payload.get("sub"))
+            await db.execute(text("DELETE FROM refresh_tokens WHERE user_id = :uid").bindparams(uid=user_id))
+            await db.commit()
+        except Exception:
+            pass
+            
+    response.delete_cookie(
+        key="refresh_token",
+        path="/",
+        httponly=True,
+        samesite="lax"
+    )
+    response.delete_cookie(
+        key="refresh_token",
+        path="/"
+    )
     return {"msg": "Logged out successfully"}
 
 @router.post("/refresh")

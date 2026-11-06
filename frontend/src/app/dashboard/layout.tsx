@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import { performLogout } from "@/lib/auth";
 
 export default function DashboardLayout({
   children,
@@ -37,10 +38,7 @@ export default function DashboardLayout({
         </nav>
         <div className="p-4 border-t border-gray-700 text-sm">
           <button
-            onClick={() => {
-              localStorage.removeItem("token");
-              router.push("/auth/login");
-            }}
+            onClick={() => performLogout()}
             className="w-full text-left text-red-400 hover:text-red-300"
           >
             Logout
