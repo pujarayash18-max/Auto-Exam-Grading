@@ -1,15 +1,9 @@
 @echo off
 title AutoExam - Cloudflare Public HTTPS Tunnel
-echo ========================================================
-echo   Starting Cloudflare Public HTTPS Tunnel for AutoExam
-echo ========================================================
-echo [*] Forwarding to local platform (http://localhost:80)...
-echo [*] Establishing encrypted HTTPS tunnel...
-echo.
-echo Look for your temporary public URL below:
-echo (e.g. https://xxxx-xxxx-xxxx.trycloudflare.com)
-echo ========================================================
-echo.
-"%~dp0tools\cloudflared.exe" tunnel --url http://localhost:80
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\start-tunnel.ps1"
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo [*] Falling back to standard tunnel launcher...
+    "%~dp0tools\cloudflared.exe" tunnel --url http://localhost:80 --no-prechecks
+)
 pause
-
