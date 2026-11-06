@@ -1,6 +1,6 @@
 @echo off
 title AutoExam - Cloudflare Public HTTPS Tunnel
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\start-tunnel.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-tunnel.ps1"
 if %ERRORLEVEL% neq 0 (
     echo.
     echo [*] Falling back to standard tunnel launcher...
