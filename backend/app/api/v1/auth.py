@@ -27,12 +27,12 @@ async def login(
     db: AsyncSession = Depends(get_db)
 ):
     ip = request.client.host
-    alias_str = form_data.username
+    alias_str = (form_data.username or "").strip()
     
     if await check_lockout(ip, alias_str):
         raise HTTPException(status_code=429, detail="Too many failed login attempts. Try again in 15 minutes.")
         
-    result = await db.execute(select(LoginAlias).where(LoginAlias.alias == alias_str))
+    result = await db.execute(select(LoginAlias).where(func.lower(LoginAlias.alias) == func.lower(alias_str)))
     login_alias = result.scalars().first()
     
     if not login_alias:
