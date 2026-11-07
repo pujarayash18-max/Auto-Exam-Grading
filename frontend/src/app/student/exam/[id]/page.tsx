@@ -4,8 +4,6 @@ import { API_BASE_URL } from '@/lib/api';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  Mic,
-  Square,
   CheckCircle,
   AlertCircle,
   Clock,
@@ -15,7 +13,8 @@ import {
   ArrowRight,
   Radio,
   FileText,
-  Volume2
+  Volume2,
+  Sparkles
 } from 'lucide-react';
 
 interface QueueStudent {
@@ -66,36 +65,14 @@ export default function StudentExamView({ params }: { params: { id: string } }) 
   const [exam, setExam] = useState<any>(null);
   const [status, setStatus] = useState<string>('waiting'); // 'waiting', 'pending', 'in_progress', 'completed'
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
-  const [transcript, setTranscript] = useState('');
   const [currentQuestion, setCurrentQuestion] = useState<any>(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const [evaluating, setEvaluating] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
   const [score, setScore] = useState<number | null>(null);
 
   // Question countdown timer
   const [questionTimeLeft, setQuestionTimeLeft] = useState<number>(120);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const prevQuestionIdRef = useRef<number | null>(null);
-
-  // Auto-clear transcript & recording when question transitions to next question
-  useEffect(() => {
-    if (currentQuestion?.id && prevQuestionIdRef.current !== currentQuestion.id) {
-      if (prevQuestionIdRef.current !== null) {
-        setTranscript('');
-        setFeedback(null);
-        setScore(null);
-        setIsRecording(false);
-      }
-      prevQuestionIdRef.current = currentQuestion.id;
-    }
-  }, [currentQuestion?.id]);
-
   const prevStatusRef = useRef<string>('waiting');
-  const recognitionRef = useRef<any>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
 
   // Synthetic admission chime
   const playAdmissionChime = () => {
@@ -118,53 +95,6 @@ export default function StudentExamView({ params }: { params: { id: string } }) 
       // AudioContext may be restricted by autoplay policies
     }
   };
-
-  // Initialize Speech Recognition for viva oral responses
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = 'en-US';
-
-        recognition.onresult = (event: any) => {
-          let text = '';
-          for (let i = 0; i < event.results.length; i++) {
-            text += event.results[i][0].transcript + ' ';
-          }
-          setTranscript(text.trim());
-        };
-
-        recognition.onerror = (event: any) => {
-          console.warn('Speech recognition error:', event.error);
-          setIsRecording(false);
-        };
-
-        recognition.onend = () => {
-          setIsRecording(false);
-        };
-
-        recognitionRef.current = recognition;
-      }
-    }
-
-    return () => {
-      if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch {}
-      }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        try { mediaRecorderRef.current.stop(); } catch {}
-      }
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach(t => t.stop());
-      }
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-    };
-  }, []);
 
   // Poll real exam and student session queue status from backend every 2s
   useEffect(() => {
@@ -250,111 +180,6 @@ export default function StudentExamView({ params }: { params: { id: string } }) 
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [status, currentQuestion?.id, sessionData?.timer_per_question_minutes]);
-
-  const handleToggleRecording = async () => {
-    if (isRecording) {
-      if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch {}
-      }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        try { mediaRecorderRef.current.stop(); } catch {}
-      }
-      setIsRecording(false);
-    } else {
-      setTranscript('');
-      setFeedback(null);
-      setScore(null);
-      audioChunksRef.current = [];
-
-      // Start MediaRecorder for audio capture
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaStreamRef.current = stream;
-        const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-        recorder.ondataavailable = (e) => {
-          if (e.data.size > 0) audioChunksRef.current.push(e.data);
-        };
-        recorder.start();
-        mediaRecorderRef.current = recorder;
-      } catch (err) {
-        console.warn('MediaRecorder not available, continuing without audio capture:', err);
-      }
-
-      // Start Speech Recognition
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.start();
-          setIsRecording(true);
-        } catch {
-          setIsRecording(true);
-        }
-      } else {
-        setIsRecording(true);
-      }
-    }
-  };
-
-  const handleSubmitAnswer = async () => {
-    if (!transcript.trim()) {
-      alert('Please speak or type an answer first.');
-      return;
-    }
-    if (!currentQuestion?.id) return;
-
-    setEvaluating(true);
-    setFeedback('AI is evaluating your oral response...');
-
-    // Convert recorded audio to base64
-    let audioBase64: string | null = null;
-    if (audioChunksRef.current.length > 0) {
-      try {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const arrayBuffer = await audioBlob.arrayBuffer();
-        const bytes = new Uint8Array(arrayBuffer);
-        let binary = '';
-        for (let i = 0; i < bytes.length; i++) {
-          binary += String.fromCharCode(bytes[i]);
-        }
-        audioBase64 = btoa(binary);
-      } catch (err) {
-        console.warn('Error encoding audio:', err);
-      }
-    }
-
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(t => t.stop());
-      mediaStreamRef.current = null;
-    }
-
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch(`${API_BASE_URL}/api/v1/viva/student-session/${params.id}/submit-answer`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          question_id: currentQuestion.id,
-          transcript: transcript.trim(),
-          audio_data: audioBase64
-        })
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Submission failed');
-      }
-
-      const data = await res.json();
-      setScore(data.score);
-      setFeedback(data.feedback);
-    } catch (err: any) {
-      setFeedback('Error submitting answer: ' + err.message);
-    } finally {
-      setEvaluating(false);
-    }
-  };
 
   const handleLeave = () => {
     router.push('/student/dashboard');
@@ -657,7 +482,7 @@ export default function StudentExamView({ params }: { params: { id: string } }) 
           </div>
         )}
 
-        {/* ── STATE 2: LIVE QUESTIONS & ORAL EXAMINATION ────────────────── */}
+        {/* ── STATE 2: LIVE QUESTIONS (VIEW-ONLY FOR CANDIDATE) ─────────── */}
         {isInProgress && (
           <div className="space-y-6">
             {/* Live Session Alert Banner */}
@@ -674,109 +499,48 @@ export default function StudentExamView({ params }: { params: { id: string } }) 
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Left Column: Active Question & Oral Recording */}
-              <div className="space-y-6">
-                <div className="bg-card p-6 rounded-2xl border border-border shadow-sm min-h-[220px] flex flex-col justify-between">
+            {/* Candidate Oral Examination Prompt Card */}
+            <div className="bg-card p-6 sm:p-10 rounded-2xl border border-border shadow-sm space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-border">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-2 rounded-lg bg-primary/10 text-primary">
+                    <FileText className="w-5 h-5" />
+                  </span>
                   <div>
-                    <div className="flex justify-between items-center mb-3">
-                      <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                        <FileText className="w-3.5 h-3.5 text-primary" />
-                        Question {currentQuestion?.question_index || 1} of {currentQuestion?.total_questions || sessionData?.questions_per_student || 5}
-                      </h3>
-                      <span className="text-xs bg-primary/10 text-primary px-2.5 py-0.5 rounded-md font-semibold border border-primary/20">
-                        Active Prompt
-                      </span>
-                    </div>
-
-                    <p className="text-lg md:text-xl text-foreground font-semibold leading-relaxed pt-2">
-                      {currentQuestion?.question_text || 'Waiting for examiner question...'}
+                    <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                      Oral Viva Examination Prompt
+                    </h3>
+                    <p className="text-sm font-bold text-foreground mt-0.5">
+                      Question {currentQuestion?.question_index || 1} of {currentQuestion?.total_questions || sessionData?.questions_per_student || 5}
                     </p>
-                  </div>
-
-                  <div className="pt-4 mt-4 border-t border-border flex justify-between items-center text-xs text-muted-foreground">
-                    <span>Answer clearly into your microphone or type below.</span>
-                    <span className="font-mono font-bold text-primary">
-                      {formatTime(questionTimeLeft)} remaining
-                    </span>
                   </div>
                 </div>
 
-                {/* Speak / Record Toggle Card */}
-                <div className="bg-card p-6 rounded-2xl border border-border shadow-sm flex flex-col items-center justify-center min-h-[220px] gap-4">
-                  <button
-                    type="button"
-                    onClick={handleToggleRecording}
-                    className={`w-36 h-24 rounded-2xl flex items-center justify-center transition-all shadow-md ${
-                      isRecording
-                        ? 'bg-rose-500/10 border-2 border-rose-500 text-rose-600 dark:text-rose-400 animate-pulse'
-                        : 'bg-primary/10 border-2 border-primary text-primary hover:bg-primary/20 hover:scale-102'
-                    }`}
-                  >
-                    <div className="text-center flex flex-col items-center gap-1.5">
-                      {isRecording ? <Square className="w-7 h-7 fill-current" /> : <Mic className="w-7 h-7" />}
-                      <span className="font-bold text-xs uppercase tracking-wider">
-                        {isRecording ? 'Stop Recording' : 'Speak Answer'}
-                      </span>
-                    </div>
-                  </button>
-
-                  <p className="text-xs text-muted-foreground font-medium tracking-wide">
-                    {isRecording ? 'Capturing speech in real-time...' : 'Click to Speak (or type your response below)'}
-                  </p>
+                <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <span className="text-xs font-mono font-bold px-3 py-1 rounded-lg bg-primary/10 text-primary border border-primary/20">
+                    {formatTime(questionTimeLeft)} remaining
+                  </span>
                 </div>
               </div>
 
-              {/* Right Column: Spoken Answer & Evaluation Insight */}
-              <div className="space-y-6">
-                <div className="bg-card p-6 rounded-2xl border border-border shadow-sm flex flex-col min-h-[220px]">
-                  <div className="flex justify-between items-center mb-2">
-                    <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                      Your Spoken / Typed Response
-                    </h2>
-                    <span className="text-[11px] text-muted-foreground font-mono">Real-Time Transcription</span>
-                  </div>
+              {/* Prominent Question Display */}
+              <div className="py-6 min-h-[160px] flex items-center">
+                <p className="text-xl sm:text-2xl lg:text-3xl font-semibold text-foreground leading-relaxed">
+                  {currentQuestion?.question_text || 'Waiting for examiner question...'}
+                </p>
+              </div>
 
-                  <textarea
-                    value={transcript}
-                    onChange={(e) => setTranscript(e.target.value)}
-                    placeholder="Your oral answer will transcribe here in real-time as you speak, or you may type directly..."
-                    className="flex-1 w-full min-h-[120px] bg-muted/40 rounded-xl p-3.5 font-mono text-sm text-foreground border border-border focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none"
-                  />
-
-                  <div className="mt-4 flex justify-between items-center">
-                    <span className="text-xs text-muted-foreground">
-                      {transcript.trim().split(/\s+/).filter(Boolean).length} words
-                    </span>
-
-                    <button
-                      type="button"
-                      onClick={handleSubmitAnswer}
-                      disabled={evaluating || !transcript.trim()}
-                      className="h-10 px-5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-semibold shadow-sm transition-colors disabled:opacity-40 flex items-center gap-1.5"
-                    >
-                      {evaluating ? 'Grading...' : 'Submit Oral Answer'}
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+              {/* Institutional Oral Answering Guidance Banner */}
+              <div className="p-4 rounded-xl bg-muted/40 border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-muted-foreground">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
+                  <span>
+                    Answer orally to your faculty examiner. Your examiner is recording, reviewing, and scoring your answers live.
+                  </span>
                 </div>
-
-                {/* AI Grading Feedback */}
-                {feedback && (
-                  <div className="bg-card p-5 rounded-2xl border border-border shadow-sm space-y-2">
-                    <div className="flex justify-between items-center mb-1">
-                      <h4 className="text-xs font-bold text-foreground uppercase tracking-wider">
-                        Evaluation Insight
-                      </h4>
-                      {score !== null && (
-                        <span className="bg-primary/10 text-primary font-bold px-3 py-1 rounded-md text-xs border border-primary/20 font-mono">
-                          Score: {score}/100
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm text-foreground leading-relaxed">{feedback}</p>
-                  </div>
-                )}
+                <span className="font-mono text-[11px] bg-background px-2.5 py-1 rounded-md border border-border shrink-0">
+                  Auto-syncs with Examiner
+                </span>
               </div>
             </div>
           </div>
