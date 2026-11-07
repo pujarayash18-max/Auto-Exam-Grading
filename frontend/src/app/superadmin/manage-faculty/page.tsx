@@ -298,7 +298,7 @@ export default function ManageFacultyPage() {
   const paginatedFaculties = filteredFaculties.slice((page - 1) * pageSize, page * pageSize);
 
   return (
-    <div className="flex h-screen bg-[var(--bg)] text-[var(--text)] overflow-hidden">
+    <div className="flex flex-col md:flex-row h-screen bg-[var(--bg)] text-[var(--text)] overflow-hidden">
       {/* Shared Admin Sidebar */}
       <SuperAdminSidebar />
 

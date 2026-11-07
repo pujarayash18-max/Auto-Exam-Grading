@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { performLogout } from '@/lib/auth';
-import { LayoutDashboard, MonitorPlay, ClipboardCheck, LogOut, Coins, Zap, RotateCcw, ListChecks } from 'lucide-react';
+import { LayoutDashboard, MonitorPlay, ClipboardCheck, LogOut, Coins, Zap, RotateCcw, ListChecks, Menu, X } from 'lucide-react';
 
 interface FacultyWallet {
   faculty_id: number;
@@ -29,6 +29,7 @@ export default function FacultyLayout({ children }: { children: React.ReactNode 
   const router = useRouter();
   const pathname = usePathname();
   const [wallet, setWallet] = useState<FacultyWallet | null>(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const fetchWallet = async () => {
     try {
@@ -80,8 +81,125 @@ export default function FacultyLayout({ children }: { children: React.ReactNode 
   ];
 
   return (
-    <div className="flex h-screen bg-background text-foreground selection:bg-primary/30 overflow-hidden transition-colors duration-200">
-      {/* Sidebar */}
+    <div className="flex flex-col md:flex-row h-screen bg-background text-foreground selection:bg-primary/30 overflow-hidden transition-colors duration-200">
+      {/* Mobile Top Header (Visible only on screens < 768px) */}
+      <header className="md:hidden flex items-center justify-between h-14 px-4 border-b border-[var(--border)] bg-[var(--surface)] shrink-0 z-30">
+        <Link href="/faculty/dashboard" className="flex items-center gap-2 select-none">
+          <div className="w-7 h-7 rounded-lg bg-[var(--primary)] text-[var(--primary-text)] flex items-center justify-center font-bold text-xs tracking-tight shadow-sm shrink-0">
+            AE
+          </div>
+          <span className="font-semibold text-sm tracking-tight text-[var(--text)]">AutoExam</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">Faculty</span>
+        </Link>
+
+        <div className="flex items-center gap-2">
+          {wallet && (
+            <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-muted text-[11px] font-medium border border-border">
+              <Coins className="w-3.5 h-3.5 text-primary" />
+              <span>{wallet.quota_remaining ? `${(wallet.quota_remaining / 1000).toFixed(0)}k` : 'Active'}</span>
+            </div>
+          )}
+          <ThemeToggle />
+          <button
+            type="button"
+            onClick={() => setMobileOpen(!mobileOpen)}
+            className="p-2 rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] text-[var(--text)] hover:bg-[var(--border)] transition"
+            aria-label="Toggle navigation menu"
+          >
+            {mobileOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+          </button>
+        </div>
+      </header>
+
+      {/* Mobile Slide-over Drawer */}
+      {mobileOpen && (
+        <div className="md:hidden fixed inset-0 z-50 flex">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setMobileOpen(false)}
+          />
+
+          {/* Drawer Panel */}
+          <div className="relative w-72 max-w-[85vw] h-full bg-[var(--surface)] border-r border-[var(--border)] flex flex-col justify-between z-10 shadow-2xl animate-in slide-in-from-left duration-200">
+            <div className="flex flex-col min-h-0 flex-1">
+              <div className="h-14 flex items-center justify-between px-4 border-b border-[var(--border)]">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-[var(--primary)] text-[var(--primary-text)] flex items-center justify-center font-bold text-xs">
+                    AE
+                  </div>
+                  <span className="font-semibold text-sm text-[var(--text)]">AutoExam</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">Faculty</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMobileOpen(false)}
+                  className="p-1.5 rounded-lg hover:bg-[var(--surface-muted)] text-[var(--text-muted)]"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <nav className="p-3 space-y-1 overflow-y-auto custom-scrollbar flex-1">
+                {navItems.map((item) => {
+                  const isActive = pathname.startsWith(item.path);
+                  const Icon = item.icon;
+                  return (
+                    <Link 
+                      key={item.path}
+                      href={item.path}
+                      onClick={() => setMobileOpen(false)}
+                      className={`flex items-center gap-3 px-3 h-10 rounded-lg text-sm font-medium transition-colors ${
+                        isActive 
+                          ? "bg-[var(--primary)] text-[var(--primary-text)] font-semibold shadow-sm" 
+                          : "text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-muted)]"
+                      }`}
+                    >
+                      <div className={`w-[18px] h-[18px] shrink-0 ${isActive ? 'text-[var(--primary-text)]' : 'text-[var(--text-muted)]'}`}>
+                        {Icon}
+                      </div>
+                      <span className="truncate">{item.name}</span>
+                    </Link>
+                  );
+                })}
+              </nav>
+
+              {/* Mobile Wallet Widget */}
+              {wallet && (
+                <div className="mx-3 mb-3 p-3 rounded-xl bg-muted/50 border border-border">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                      <Coins className="w-3.5 h-3.5 text-primary" />
+                      AI Quota
+                    </span>
+                    <span className="text-[10px] font-mono text-muted-foreground">
+                      {wallet.quota_remaining ? `${wallet.quota_remaining.toLocaleString()} left` : 'Active'}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">Provider: {wallet.active_provider}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Mobile Drawer Footer: Logout */}
+            <div className="p-3 border-t border-[var(--border)] shrink-0 flex items-center gap-2">
+              <button 
+                type="button"
+                onClick={() => {
+                  setMobileOpen(false);
+                  handleLogout();
+                }}
+                className="flex-1 h-10 px-3 rounded-lg text-sm font-medium text-[var(--danger-text)] hover:bg-[var(--danger-bg)] flex items-center gap-2.5 transition-colors duration-150"
+              >
+                <LogOut className="w-[18px] h-[18px] shrink-0" />
+                <span className="truncate">Logout</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Desktop Sidebar */}
       <aside className="w-[260px] min-w-[260px] max-w-[260px] h-screen bg-[var(--surface)] border-r border-[var(--border)] flex flex-col justify-between hidden md:flex shrink-0 transition-colors duration-150 z-20">
         <div className="flex flex-col min-h-0 flex-1">
           <Link 

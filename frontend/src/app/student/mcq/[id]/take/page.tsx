@@ -5,7 +5,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter, useParams, useSearchParams } from 'next/navigation';
 import {
   ShieldAlert, Clock, CheckCircle2, AlertTriangle, ArrowLeft,
-  ArrowRight, Flag, Send, RefreshCw, Maximize2, Lock, Unlock, HelpCircle, KeyRound
+  ArrowRight, Flag, Send, RefreshCw, Maximize2, Lock, Unlock, HelpCircle, KeyRound,
+  LayoutGrid, X
 } from 'lucide-react';
 
 interface Question {
@@ -40,6 +41,7 @@ export default function StudentMCQTakePage() {
   const [totalMarks, setTotalMarks] = useState(100);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [showMobileNavigator, setShowMobileNavigator] = useState(false);
 
   // Student Responses
   const [answers, setAnswers] = useState<{ [qId: number]: string }>({});
@@ -702,30 +704,110 @@ export default function StudentMCQTakePage() {
           )}
 
           {/* Bottom Navigation Buttons */}
-          <div className="max-w-3xl mx-auto w-full pt-4 border-t border-border flex items-center justify-between">
+          <div className="max-w-3xl mx-auto w-full pt-4 border-t border-border flex items-center justify-between gap-2">
             <button
               onClick={() => setCurrentIndex(prev => Math.max(0, prev - 1))}
               disabled={currentIndex === 0}
-              className="px-4 py-2 text-xs font-semibold rounded-lg border border-border hover:bg-muted text-foreground transition-colors disabled:opacity-40 flex items-center gap-1.5"
+              className="px-3 md:px-4 py-2 text-xs font-semibold rounded-lg border border-border hover:bg-muted text-foreground transition-colors disabled:opacity-40 flex items-center gap-1.5"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              Previous
+              <span className="hidden sm:inline">Previous</span>
             </button>
 
-            <span className="text-xs text-muted-foreground font-mono">
+            {/* Mobile Question Palette Opener */}
+            <button
+              type="button"
+              onClick={() => setShowMobileNavigator(true)}
+              className="md:hidden px-3 py-2 text-xs font-semibold rounded-lg border border-border bg-muted/60 hover:bg-muted text-foreground flex items-center gap-1.5"
+            >
+              <LayoutGrid className="w-3.5 h-3.5 text-primary" />
+              <span>Palette ({currentIndex + 1}/{questions.length})</span>
+            </button>
+
+            <span className="hidden md:inline text-xs text-muted-foreground font-mono">
               {currentIndex + 1} / {questions.length}
             </span>
 
             <button
               onClick={() => setCurrentIndex(prev => Math.min(questions.length - 1, prev + 1))}
               disabled={currentIndex === questions.length - 1}
-              className="px-4 py-2 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40 flex items-center gap-1.5"
+              className="px-3 md:px-4 py-2 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40 flex items-center gap-1.5"
             >
-              Next
+              <span className="hidden sm:inline">Next</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </main>
+
+        {/* Mobile Question Navigator Bottom Sheet */}
+        {showMobileNavigator && (
+          <div className="md:hidden fixed inset-0 z-50 flex flex-col justify-end">
+            <div 
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={() => setShowMobileNavigator(false)}
+            />
+            <div className="relative bg-card border-t border-border rounded-t-2xl p-5 max-h-[75vh] flex flex-col justify-between shadow-2xl z-10 animate-in slide-in-from-bottom duration-200">
+              <div className="flex items-center justify-between pb-3 border-b border-border">
+                <div className="flex items-center gap-2">
+                  <LayoutGrid className="w-4 h-4 text-primary" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">
+                    Question Palette ({answeredCount}/{questions.length} Answered)
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowMobileNavigator(false)}
+                  className="p-1 rounded-lg hover:bg-muted text-muted-foreground"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="py-4 overflow-y-auto custom-scrollbar">
+                <div className="grid grid-cols-5 gap-2.5">
+                  {questions.map((q, idx) => {
+                    const isAnswered = Boolean(answers[q.id]);
+                    const isFlag = Boolean(flagged[q.id]);
+                    const isCurrent = idx === currentIndex;
+
+                    let btnClass = 'bg-background border-border text-muted-foreground';
+                    if (isCurrent) {
+                      btnClass = 'border-primary ring-2 ring-primary/20 text-primary font-bold';
+                    } else if (isFlag) {
+                      btnClass = 'bg-amber-500/10 border-amber-500/40 text-amber-600 dark:text-amber-400 font-semibold';
+                    } else if (isAnswered) {
+                      btnClass = 'bg-primary/15 border-primary/40 text-foreground font-semibold';
+                    }
+
+                    return (
+                      <button
+                        key={q.id}
+                        onClick={() => {
+                          setCurrentIndex(idx);
+                          setShowMobileNavigator(false);
+                        }}
+                        className={`h-10 rounded-lg border text-xs font-mono transition-all flex items-center justify-center relative ${btnClass}`}
+                      >
+                        {idx + 1}
+                        {isFlag && (
+                          <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowMobileNavigator(false)}
+                className="w-full py-2.5 rounded-lg border border-border text-xs font-medium text-foreground bg-muted hover:bg-muted/80 transition"
+              >
+                Close Palette
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Right: Question Navigation Matrix */}
         <aside className="w-64 border-l border-border bg-card p-5 hidden md:flex flex-col justify-between shrink-0">

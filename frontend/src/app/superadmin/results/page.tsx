@@ -130,7 +130,7 @@ export default function MasterResultsPage() {
   const totalPages = Math.ceil(totalCount / limit) || 1;
 
   return (
-    <div className="flex h-screen bg-[var(--background)] text-[var(--text)] selection:bg-blue-600/30 overflow-hidden transition-colors duration-150">
+    <div className="flex flex-col md:flex-row h-screen bg-[var(--background)] text-[var(--text)] selection:bg-blue-600/30 overflow-hidden transition-colors duration-150">
       <SuperAdminSidebar />
 
       <main className="flex-1 flex flex-col h-screen overflow-hidden relative">

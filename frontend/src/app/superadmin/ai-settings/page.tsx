@@ -598,7 +598,7 @@ export default function AISettingsBillingPage() {
   const currentPlanCalc = getSelectedPlanPricing();
 
   return (
-    <div className="flex h-screen bg-background text-foreground overflow-hidden">
+    <div className="flex flex-col md:flex-row h-screen bg-background text-foreground overflow-hidden">
       <SuperAdminSidebar />
 
       <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">

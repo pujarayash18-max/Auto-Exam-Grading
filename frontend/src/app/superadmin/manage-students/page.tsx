@@ -304,7 +304,7 @@ export default function ManageStudents() {
   const paginatedStudents = filteredStudents.slice((page - 1) * pageSize, page * pageSize);
 
   return (
-    <div className="flex h-screen bg-background text-foreground selection:bg-primary/30 overflow-hidden transition-colors duration-200">
+    <div className="flex flex-col md:flex-row h-screen bg-background text-foreground selection:bg-primary/30 overflow-hidden transition-colors duration-200">
       <SuperAdminSidebar />
 
       <main className="flex-1 flex flex-col h-screen overflow-hidden relative">

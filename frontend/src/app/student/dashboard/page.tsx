@@ -10,11 +10,12 @@ import {
   Volume2, ListChecks, KeyRound, CheckCircle2, XCircle, ShieldAlert,
   Lock, ArrowRight, RefreshCw, ChevronDown, ChevronUp, Eye, ExternalLink,
   BarChart3, ShieldCheck, Mic, MicOff, Wifi, Maximize2, Play, Square,
-  Activity, Target, Brain, BookOpen, Layers, Award
+  Activity, Target, Brain, BookOpen, Layers, Award, Menu, X
 } from 'lucide-react';
 
 export default function StudentDashboard() {
   const router = useRouter();
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('results');
   const [resultSubTab, setResultSubTab] = useState<'viva' | 'mcq'>('viva');
   const [profile, setProfile] = useState<any>(null);
@@ -593,8 +594,104 @@ export default function StudentDashboard() {
   ];
 
   return (
-    <div className="flex h-screen bg-background text-foreground selection:bg-primary/30 overflow-hidden transition-colors duration-200">
-      {/* Sidebar */}
+    <div className="flex flex-col md:flex-row h-screen bg-background text-foreground selection:bg-primary/30 overflow-hidden transition-colors duration-200">
+      {/* Mobile Top Header (Visible only on screens < 768px) */}
+      <header className="md:hidden flex items-center justify-between h-14 px-4 border-b border-[var(--border)] bg-[var(--surface)] shrink-0 z-30">
+        <div className="flex items-center gap-2 select-none">
+          <div className="w-7 h-7 rounded-lg bg-[var(--primary)] text-[var(--primary-text)] flex items-center justify-center font-bold text-xs tracking-tight shadow-sm shrink-0">
+            AE
+          </div>
+          <span className="font-semibold text-sm tracking-tight text-[var(--text)]">AutoExam</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">Student</span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <button
+            type="button"
+            onClick={() => setMobileOpen(!mobileOpen)}
+            className="p-2 rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] text-[var(--text)] hover:bg-[var(--border)] transition"
+            aria-label="Toggle navigation menu"
+          >
+            {mobileOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+          </button>
+        </div>
+      </header>
+
+      {/* Mobile Slide-over Drawer */}
+      {mobileOpen && (
+        <div className="md:hidden fixed inset-0 z-50 flex">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setMobileOpen(false)}
+          />
+
+          {/* Drawer Panel */}
+          <div className="relative w-72 max-w-[85vw] h-full bg-[var(--surface)] border-r border-[var(--border)] flex flex-col justify-between z-10 shadow-2xl animate-in slide-in-from-left duration-200">
+            <div className="flex flex-col min-h-0 flex-1">
+              <div className="h-14 flex items-center justify-between px-4 border-b border-[var(--border)]">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-[var(--primary)] text-[var(--primary-text)] flex items-center justify-center font-bold text-xs">
+                    AE
+                  </div>
+                  <span className="font-semibold text-sm text-[var(--text)]">AutoExam</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">Student</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMobileOpen(false)}
+                  className="p-1.5 rounded-lg hover:bg-[var(--surface-muted)] text-[var(--text-muted)]"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <nav className="p-3 space-y-1 overflow-y-auto custom-scrollbar flex-1">
+                {navItems.map((item) => {
+                  const isActive = activeTab === item.id;
+                  return (
+                    <button 
+                      key={item.id}
+                      onClick={() => {
+                        setActiveTab(item.id);
+                        setMobileOpen(false);
+                      }}
+                      className={`group w-full flex items-center gap-3 px-3 h-10 rounded-lg text-sm font-medium transition-colors ${
+                        isActive 
+                          ? "bg-[var(--primary)] text-[var(--primary-text)] font-semibold shadow-sm" 
+                          : "text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-muted)]"
+                      }`}
+                    >
+                      <div className={`w-[18px] h-[18px] shrink-0 ${isActive ? 'text-[var(--primary-text)]' : 'text-[var(--text-muted)]'}`}>
+                        {item.icon}
+                      </div>
+                      <span className="truncate">{item.name}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
+
+            {/* Mobile Drawer Footer: Logout */}
+            <div className="p-3 border-t border-[var(--border)] shrink-0 flex items-center gap-2">
+              <button 
+                type="button"
+                onClick={() => {
+                  setMobileOpen(false);
+                  handleLogout();
+                }}
+                className="flex-1 h-10 px-3 rounded-lg text-sm font-medium text-[var(--danger-text)] hover:bg-[var(--danger-bg)] flex items-center gap-2.5 transition-colors duration-150"
+              >
+                <LogOut className="w-[18px] h-[18px] shrink-0" />
+                <span className="truncate">Logout</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Desktop Persistent Sidebar */}
       <aside className="w-[260px] min-w-[260px] max-w-[260px] h-screen bg-[var(--surface)] border-r border-[var(--border)] flex flex-col justify-between hidden md:flex shrink-0 transition-colors duration-150 z-20">
         <div className="flex flex-col min-h-0 flex-1">
           <div className="h-16 flex items-center px-5 border-b border-[var(--border)] select-none">
