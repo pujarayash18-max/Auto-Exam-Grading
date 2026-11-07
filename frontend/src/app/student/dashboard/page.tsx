@@ -9,7 +9,7 @@ import {
   User, FileText, Calendar, LogOut, Download, Sparkles, AlertCircle,
   Volume2, ListChecks, KeyRound, CheckCircle2, XCircle, ShieldAlert,
   Lock, ArrowRight, RefreshCw, ChevronDown, ChevronUp, Eye, ExternalLink,
-  BarChart3, ShieldCheck, Mic, MicOff, Wifi, Maximize2, Play, Square,
+  BarChart3, ShieldCheck, Wifi, Maximize2,
   Activity, Target, Brain, BookOpen, Layers, Award, Menu, X
 } from 'lucide-react';
 
@@ -39,24 +39,12 @@ export default function StudentDashboard() {
   const [analyticsData, setAnalyticsData] = useState<any | null>(null);
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
 
-  // Pre-Flight Diagnostics State (Feature 1)
-  const [micStream, setMicStream] = useState<MediaStream | null>(null);
-  const [audioLevel, setAudioLevel] = useState<number>(0);
-  const [isTestingMic, setIsTestingMic] = useState<boolean>(false);
-  const [isRecordingSoundCheck, setIsRecordingSoundCheck] = useState<boolean>(false);
-  const [soundCheckSecondsLeft, setSoundCheckSecondsLeft] = useState<number>(5);
-  const [soundCheckUrl, setSoundCheckUrl] = useState<string | null>(null);
-  const [soundCheckRecorded, setSoundCheckRecorded] = useState<boolean>(false);
+  // Pre-Flight Diagnostics State
   const [fullscreenTested, setFullscreenTested] = useState<boolean>(false);
-  const [antiCheatDefocusCount, setAntiCheatDefocusCount] = useState<number>(0);
-  const [lastDefocusEvent, setLastDefocusEvent] = useState<string | null>(null);
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [latencyStatus, setLatencyStatus] = useState<'idle' | 'testing' | 'done'>('idle');
   const [latencyGrade, setLatencyGrade] = useState<string>('Unchecked');
   const [viewportResolution, setViewportResolution] = useState<string>('1920 x 1080');
-
-  const animationFrameRef = useRef<number | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   useEffect(() => {
     fetchProfile();
@@ -70,40 +58,11 @@ export default function StudentDashboard() {
       const handleResize = () => setViewportResolution(`${window.innerWidth} x ${window.innerHeight}`);
       window.addEventListener('resize', handleResize);
 
-      // Safe anti-cheat defocus simulator listener
-      const handleVisibilityChange = () => {
-        if (document.hidden) {
-          setAntiCheatDefocusCount(prev => prev + 1);
-          setLastDefocusEvent(`Defocus Registered at ${new Date().toLocaleTimeString()} (Window tab switched)`);
-        }
-      };
-      const handleBlur = () => {
-        setAntiCheatDefocusCount(prev => prev + 1);
-        setLastDefocusEvent(`Defocus Registered at ${new Date().toLocaleTimeString()} (Window lost focus)`);
-      };
-
-      document.addEventListener('visibilitychange', handleVisibilityChange);
-      window.addEventListener('blur', handleBlur);
-
       return () => {
         window.removeEventListener('resize', handleResize);
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-        window.removeEventListener('blur', handleBlur);
       };
     }
   }, []);
-
-  // Cleanup mic on unmount
-  useEffect(() => {
-    return () => {
-      if (micStream) {
-        micStream.getTracks().forEach(track => track.stop());
-      }
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, [micStream]);
 
   const fetchAnalytics = async () => {
     setLoadingAnalytics(true);
@@ -246,95 +205,6 @@ export default function StudentDashboard() {
   };
 
   // Pre-Flight Diagnostic Handlers
-  const handleToggleLiveMic = async () => {
-    if (isTestingMic) {
-      if (micStream) {
-        micStream.getTracks().forEach(t => t.stop());
-        setMicStream(null);
-      }
-      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-      setIsTestingMic(false);
-      setAudioLevel(0);
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      setMicStream(stream);
-      setIsTestingMic(true);
-
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      const audioCtx = new AudioContextClass();
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      const source = audioCtx.createMediaStreamSource(stream);
-      source.connect(analyser);
-
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      const updateVolume = () => {
-        if (!stream.active) return;
-        analyser.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
-        const avg = sum / dataArray.length;
-        const normalized = Math.min(100, Math.round((avg / 128) * 100));
-        setAudioLevel(normalized);
-        animationFrameRef.current = requestAnimationFrame(updateVolume);
-      };
-      updateVolume();
-    } catch (err) {
-      console.error('Microphone access denied', err);
-      alert('Microphone access denied. Please allow microphone permissions in your browser settings.');
-    }
-  };
-
-  const handleRecordSoundCheck = async () => {
-    try {
-      let stream = micStream;
-      if (!stream || !stream.active) {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        setMicStream(stream);
-        setIsTestingMic(true);
-      }
-
-      setIsRecordingSoundCheck(true);
-      setSoundCheckSecondsLeft(5);
-
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      const chunks: BlobPart[] = [];
-
-      mediaRecorder.ondataavailable = e => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'audio/webm' });
-        const url = URL.createObjectURL(blob);
-        setSoundCheckUrl(url);
-        setSoundCheckRecorded(true);
-        setIsRecordingSoundCheck(false);
-      };
-
-      mediaRecorder.start();
-
-      let countdown = 5;
-      const interval = setInterval(() => {
-        countdown -= 1;
-        setSoundCheckSecondsLeft(countdown);
-        if (countdown <= 0) {
-          clearInterval(interval);
-          if (mediaRecorder.state === 'recording') {
-            mediaRecorder.stop();
-          }
-        }
-      }, 1000);
-    } catch (err) {
-      console.error('Sound check recording failed', err);
-      setIsRecordingSoundCheck(false);
-    }
-  };
-
   const handleTestFullscreen = async () => {
     try {
       if (!document.fullscreenElement) {
@@ -769,7 +639,7 @@ export default function StudentDashboard() {
                 {activeTab === 'analytics'
                   ? 'Track your mastery across Bloom\'s taxonomy, subject competencies, and personalized revision gaps.'
                   : activeTab === 'diagnostics'
-                  ? 'Test your microphone, screen resolution, connection latency, and anti-cheat compliance before starting.'
+                  ? 'Verify your display fullscreen capability and network connection latency before starting.'
                   : activeTab === 'mcq'
                   ? 'Enter secure PIN to start an exam or inspect your attempted question responses.'
                   : activeTab === 'results'
@@ -1404,15 +1274,14 @@ export default function StudentDashboard() {
               </div>
             )}
 
-            {/* FEATURE 1: Pre-Flight Hardware & System Readiness Tab */}
+            {/* Pre-Flight Hardware & System Readiness Tab */}
             {activeTab === 'diagnostics' && (
               <div className="space-y-6">
                 {/* Status Readiness Banner */}
                 {(() => {
-                  const micPassed = soundCheckRecorded || (isTestingMic && audioLevel > 5);
                   const screenPassed = fullscreenTested;
                   const latencyPassed = latencyStatus === 'done' && latencyMs !== null && latencyMs < 200;
-                  const allPassed = micPassed && screenPassed && latencyPassed;
+                  const allPassed = screenPassed && latencyPassed;
 
                   return (
                     <div className={`p-6 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm ${
@@ -1426,13 +1295,13 @@ export default function StudentDashboard() {
                             <ShieldCheck className="w-5 h-5" />
                           </span>
                           <h3 className="text-base font-bold text-foreground">
-                            {allPassed ? 'System Readiness Certified (4/4 Verifications Passed)' : 'Pre-Exam Pre-Flight Diagnostic Checklist'}
+                            {allPassed ? 'System Readiness Certified (2/2 Verifications Passed)' : 'Pre-Exam Pre-Flight Diagnostic Checklist'}
                           </h3>
                         </div>
                         <p className="text-xs text-muted-foreground">
                           {allPassed
-                            ? 'Your workstation, microphone gain, viewport resolution, and connection latency meet institutional proctoring standards.'
-                            : 'Perform the four diagnostics below to guarantee uninterrupted audio recognition and prevent anti-cheat lockouts.'}
+                            ? 'Your workstation viewport resolution, fullscreen capability, and network roundtrip latency meet institutional proctoring standards.'
+                            : 'Perform the two readiness diagnostics below to verify display and server connection performance.'}
                         </p>
                       </div>
 
@@ -1452,91 +1321,9 @@ export default function StudentDashboard() {
                   );
                 })()}
 
-                {/* 4 Diagnostic Verification Cards */}
+                {/* 2 Diagnostic Verification Cards */}
                 <div className="grid gap-6 md:grid-cols-2">
-                  {/* Card 1: Microphone & Audio Input Diagnostic */}
-                  <div className="bg-card p-6 rounded-2xl border border-border shadow-sm space-y-4">
-                    <div className="flex items-start justify-between">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <Mic className="w-4 h-4 text-primary" />
-                          <h4 className="text-sm font-bold text-foreground">Microphone & Input Gain Diagnostic</h4>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          Verify your speech recognition audio feed and test volume sensitivity.
-                        </p>
-                      </div>
-                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded border ${
-                        soundCheckRecorded
-                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
-                          : isTestingMic
-                          ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20 animate-pulse'
-                          : 'bg-muted text-muted-foreground border-border'
-                      }`}>
-                        {soundCheckRecorded ? 'Audio Certified' : isTestingMic ? 'Live Feed Active' : 'Standby'}
-                      </span>
-                    </div>
-
-                    {/* Live VU Volume Meter */}
-                    <div className="space-y-1.5">
-                      <div className="flex justify-between text-xs text-muted-foreground">
-                        <span>Live Input Sensitivity</span>
-                        <span className="font-mono font-semibold text-foreground">{audioLevel}%</span>
-                      </div>
-                      <div className="w-full h-3 rounded-lg bg-muted overflow-hidden flex items-center p-0.5">
-                        <div
-                          className="h-full rounded-md bg-emerald-500 transition-all duration-75"
-                          style={{ width: `${audioLevel}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    {/* 5-Second Test Recording & Playback */}
-                    <div className="space-y-3 pt-2 border-t border-border">
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={handleToggleLiveMic}
-                          className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
-                            isTestingMic
-                              ? 'bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20'
-                              : 'bg-primary/10 text-primary hover:bg-primary/20'
-                          }`}
-                        >
-                          {isTestingMic ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                          {isTestingMic ? 'Stop Live VU Meter' : 'Start Live VU Meter'}
-                        </button>
-
-                        <button
-                          type="button"
-                          disabled={isRecordingSoundCheck}
-                          onClick={handleRecordSoundCheck}
-                          className="flex-1 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
-                        >
-                          {isRecordingSoundCheck ? (
-                            <>
-                              <Square className="w-3.5 h-3.5 text-red-400 fill-current" />
-                              Recording ({soundCheckSecondsLeft}s)...
-                            </>
-                          ) : (
-                            <>
-                              <Play className="w-3.5 h-3.5" />
-                              Record 5s Sound Check
-                            </>
-                          )}
-                        </button>
-                      </div>
-
-                      {soundCheckUrl && (
-                        <div className="p-3 rounded-xl bg-background border border-border space-y-1.5">
-                          <span className="text-[11px] font-semibold text-muted-foreground block">Recorded Sound Playback:</span>
-                          <audio controls src={soundCheckUrl} className="w-full h-8 accent-primary" />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Card 2: Viewport & Fullscreen Capability */}
+                  {/* Card 1: Viewport & Fullscreen Capability */}
                   <div className="bg-card p-6 rounded-2xl border border-border shadow-sm space-y-4">
                     <div className="flex items-start justify-between">
                       <div className="space-y-1">
@@ -1580,46 +1367,7 @@ export default function StudentDashboard() {
                     </div>
                   </div>
 
-                  {/* Card 3: Anti-Cheat Focus Sensor Demo */}
-                  <div className="bg-card p-6 rounded-2xl border border-border shadow-sm space-y-4">
-                    <div className="flex items-start justify-between">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <ShieldAlert className="w-4 h-4 text-primary" />
-                          <h4 className="text-sm font-bold text-foreground">Anti-Cheat Defocus Sensor Test</h4>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          Simulates how window-blur and tab-switching events are detected during proctored exams.
-                        </p>
-                      </div>
-                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded border ${
-                        antiCheatDefocusCount > 0
-                          ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
-                          : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
-                      }`}>
-                        {antiCheatDefocusCount > 0 ? `${antiCheatDefocusCount} Event(s) Detected` : 'Focus Intact'}
-                      </span>
-                    </div>
-
-                    <div className="p-3.5 rounded-xl bg-background border border-border text-xs space-y-1">
-                      <span className="text-[10px] text-muted-foreground uppercase font-semibold block">Interactive Sandbox:</span>
-                      <p className="text-[11px] text-muted-foreground leading-relaxed">
-                        Switch to another browser tab or click outside this window. The sensor below will immediately register the defocus event.
-                      </p>
-                      {lastDefocusEvent && (
-                        <p className="text-xs font-mono font-bold text-amber-700 dark:text-amber-300 pt-1">
-                          {lastDefocusEvent}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="pt-2 border-t border-border flex justify-between items-center text-xs text-muted-foreground">
-                      <span>Threshold in live exam:</span>
-                      <span className="font-semibold text-red-600 dark:text-red-400">Immediate Lockout</span>
-                    </div>
-                  </div>
-
-                  {/* Card 4: Network Latency & Ping Stability */}
+                  {/* Card 2: Network Latency & Ping Stability */}
                   <div className="bg-card p-6 rounded-2xl border border-border shadow-sm space-y-4">
                     <div className="flex items-start justify-between">
                       <div className="space-y-1">

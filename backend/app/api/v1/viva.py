@@ -641,7 +641,8 @@ async def get_student_session_status(
 ):
     """
     Live real-time session polling for the student waiting room & exam view.
-    Replaces any simulated mock timers.
+    Returns live queue position, turn number, currently examined student,
+    and the active viva question when the student's turn begins.
     """
     prof_res = await db.execute(select(StudentProfile).where(StudentProfile.user_id == current_user.id))
     prof = prof_res.scalars().first()
@@ -657,7 +658,22 @@ async def get_student_session_status(
     )
     run = run_res.scalars().first()
     if not run:
-        return {"status": "waiting", "message": "Exam has not been started by faculty yet."}
+        return {
+            "status": "waiting",
+            "message": "Exam has not been started by faculty yet. Waiting for examiner to begin...",
+            "subject_name": exam.subject_name,
+            "timer_per_question_minutes": exam.timer_per_question_minutes or 2.0,
+            "questions_per_student": exam.questions_per_student or 5,
+            "my_turn_number": None,
+            "students_ahead": None,
+            "total_in_queue": 0,
+            "estimated_wait_minutes": 0,
+            "currently_examining": None,
+            "queue_list": [],
+            "completed_count": 0,
+            "total_students": 0,
+            "active_question": None
+        }
         
     sr_res = await db.execute(
         select(StudentVivaRun).where(
@@ -667,7 +683,7 @@ async def get_student_session_status(
     )
     sr = sr_res.scalars().first()
     if not sr:
-        # Student profile exists in class, create pending record
+        # Student profile exists in class, register pending record in the run
         sr = StudentVivaRun(
             exam_run_id=run.id,
             student_id=prof.id,
@@ -676,6 +692,80 @@ async def get_student_session_status(
         db.add(sr)
         await db.commit()
         await db.refresh(sr)
+    
+    # Query all StudentVivaRun records for this run to build the exact live queue
+    all_sr_res = await db.execute(
+        select(StudentVivaRun)
+        .where(StudentVivaRun.exam_run_id == run.id)
+        .order_by(StudentVivaRun.id.asc())
+    )
+    all_runs = all_sr_res.scalars().all()
+    
+    # Find who is currently being examined
+    active_run = next((r for r in all_runs if r.status == StudentVivaStatus.IN_PROGRESS), None)
+    currently_examining = None
+    if active_run:
+        act_st = await db.get(StudentProfile, active_run.student_id)
+        currently_examining = {
+            "student_id": active_run.student_id,
+            "name": act_st.name if act_st else f"Student #{active_run.student_id}",
+            "gr_number": act_st.gr_number if act_st else "N/A",
+            "enrollment_number": act_st.enrollment_number if act_st else "N/A",
+            "is_you": (active_run.student_id == prof.id)
+        }
+        
+    # Build pending queue list with 1-based turn numbers
+    pending_runs = [r for r in all_runs if r.status == StudentVivaStatus.PENDING]
+    queue_list = []
+    my_turn_number = None
+    students_ahead = None
+    
+    for idx, pr in enumerate(pending_runs):
+        turn = idx + 1
+        is_you = (pr.student_id == prof.id)
+        if is_you:
+            my_turn_number = turn
+            students_ahead = idx
+            
+        st = await db.get(StudentProfile, pr.student_id)
+        queue_list.append({
+            "turn_number": turn,
+            "student_id": pr.student_id,
+            "name": st.name if st else f"Student #{pr.student_id}",
+            "gr_number": st.gr_number if st else "N/A",
+            "enrollment_number": st.enrollment_number if st else "N/A",
+            "is_you": is_you,
+            "status": "pending"
+        })
+        
+    # Calculate estimated wait time
+    timer_per_q = exam.timer_per_question_minutes or 2.0
+    q_per_student = exam.questions_per_student or 5
+    mins_per_session = timer_per_q * q_per_student
+    
+    if sr.status == StudentVivaStatus.PENDING:
+        extra_session = 1 if (currently_examining and not currently_examining.get("is_you")) else 0
+        ahead_count = students_ahead if students_ahead is not None else len(pending_runs)
+        estimated_wait_minutes = max(1, round((ahead_count + extra_session) * mins_per_session))
+    elif sr.status == StudentVivaStatus.IN_PROGRESS:
+        estimated_wait_minutes = 0
+        students_ahead = 0
+        my_turn_number = 1
+    else:
+        estimated_wait_minutes = 0
+        students_ahead = 0
+        
+    # Ensure assigned questions exist if student is IN_PROGRESS
+    if sr.status == StudentVivaStatus.IN_PROGRESS and not sr.assigned_question_ids:
+        per_student = exam.questions_per_student or 5
+        all_q_res = await db.execute(select(ExamQuestion).where(ExamQuestion.exam_id == run.exam_id))
+        all_questions = all_q_res.scalars().all()
+        if all_questions:
+            q_ids = [q.id for q in all_questions]
+            selected = random.sample(q_ids, min(len(q_ids), per_student))
+            sr.assigned_question_ids = ",".join(str(qid) for qid in selected)
+            await db.commit()
+            await db.refresh(sr)
         
     active_question = None
     
@@ -703,6 +793,12 @@ async def get_student_session_status(
             "question_index": ans_count + 1,
             "total_questions": len(questions)
         }
+    elif questions and ans_count >= len(questions) and sr.status == StudentVivaStatus.IN_PROGRESS:
+        # All questions completed
+        sr.status = StudentVivaStatus.COMPLETED
+        sr.completed_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(sr)
 
     status_str = sr.status.value if hasattr(sr.status, "value") else str(sr.status)
     return {
@@ -710,7 +806,16 @@ async def get_student_session_status(
         "run_id": run.id,
         "viva_run_id": sr.id,
         "subject_name": exam.subject_name,
-        "timer_per_question_minutes": exam.timer_per_question_minutes,
+        "timer_per_question_minutes": timer_per_q,
+        "questions_per_student": q_per_student,
+        "my_turn_number": my_turn_number,
+        "students_ahead": students_ahead,
+        "total_in_queue": len(pending_runs),
+        "estimated_wait_minutes": estimated_wait_minutes,
+        "currently_examining": currently_examining,
+        "queue_list": queue_list,
+        "completed_count": len([r for r in all_runs if r.status == StudentVivaStatus.COMPLETED]),
+        "total_students": len(all_runs),
         "active_question": active_question,
         "total_score": sr.total_score,
         "grade": sr.grade
