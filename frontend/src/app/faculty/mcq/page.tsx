@@ -265,6 +265,27 @@ export default function FacultyMCQPage() {
         access_pin: autoGenPin ? null : customPin.trim() || null
       };
 
+      // Helper to safely extract error message from API response without crashing on HTML (e.g. 413/502/504)
+      const parseResponseError = async (res: Response, fallback: string): Promise<string> => {
+        try {
+          const contentType = res.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const err = await res.json();
+            return err.detail || (typeof err === 'string' ? err : JSON.stringify(err)) || fallback;
+          }
+          const text = await res.text();
+          if (res.status === 413 || text.includes('413') || text.includes('Too Large')) {
+            return 'Uploaded file exceeds server size limit. Please upload a file smaller than 100MB.';
+          }
+          if (res.status === 504 || res.status === 502) {
+            return 'Server processing timed out (504/502). Please try with fewer questions or shorter lecture notes.';
+          }
+          return `${fallback} (Status ${res.status})`;
+        } catch {
+          return fallback;
+        }
+      };
+
       // 1. Create Exam record
       const createRes = await fetch(`${API_BASE_URL}/api/v1/mcq/exams`, {
         method: 'POST',
@@ -276,15 +297,14 @@ export default function FacultyMCQPage() {
       });
 
       if (!createRes.ok) {
-        let errMsg = 'Failed to create exam';
-        try {
-          const err = await createRes.json();
-          errMsg = err.detail || (typeof err === 'string' ? err : JSON.stringify(err));
-        } catch {}
+        const errMsg = await parseResponseError(createRes, 'Failed to create exam record.');
         throw new Error(errMsg);
       }
 
-      const newExam = await createRes.json();
+      const newExam = await createRes.json().catch(() => null);
+      if (!newExam || !newExam.id) {
+        throw new Error('Server returned an invalid response format when creating exam.');
+      }
       const examId = newExam.id;
 
       // 2. Attach questions based on selected option
@@ -298,8 +318,8 @@ export default function FacultyMCQPage() {
           body: formData
         });
         if (!uploadRes.ok) {
-          const err = await uploadRes.json();
-          throw new Error(err.detail || 'Exam created, but template upload failed.');
+          const errMsg = await parseResponseError(uploadRes, 'Exam created, but template upload failed.');
+          throw new Error(errMsg);
         }
       } else if (creationMethod === 'ai') {
         const formData = new FormData();
@@ -328,8 +348,8 @@ export default function FacultyMCQPage() {
           body: formData
         });
         if (!aiRes.ok) {
-          const err = await aiRes.json();
-          throw new Error(err.detail || 'Exam created, but AI question generation failed.');
+          const errMsg = await parseResponseError(aiRes, 'Exam created, but AI question generation failed.');
+          throw new Error(errMsg);
         }
       }
 
