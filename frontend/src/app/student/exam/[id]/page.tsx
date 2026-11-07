@@ -7,6 +7,7 @@ import {
   Mic,
   Square,
   CheckCircle,
+  AlertCircle,
   Clock,
   Users,
   UserCheck,
@@ -75,6 +76,20 @@ export default function StudentExamView({ params }: { params: { id: string } }) 
   // Question countdown timer
   const [questionTimeLeft, setQuestionTimeLeft] = useState<number>(120);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const prevQuestionIdRef = useRef<number | null>(null);
+
+  // Auto-clear transcript & recording when question transitions to next question
+  useEffect(() => {
+    if (currentQuestion?.id && prevQuestionIdRef.current !== currentQuestion.id) {
+      if (prevQuestionIdRef.current !== null) {
+        setTranscript('');
+        setFeedback(null);
+        setScore(null);
+        setIsRecording(false);
+      }
+      prevQuestionIdRef.current = currentQuestion.id;
+    }
+  }, [currentQuestion?.id]);
 
   const prevStatusRef = useRef<string>('waiting');
   const recognitionRef = useRef<any>(null);
@@ -348,6 +363,8 @@ export default function StudentExamView({ params }: { params: { id: string } }) 
   const isWaitingRoom = status === 'waiting' || status === 'pending';
   const isInProgress = status === 'in_progress';
   const isCompleted = status === 'completed';
+  const isPaused = status === 'paused';
+  const isAbsent = status === 'absent';
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -384,9 +401,21 @@ export default function StudentExamView({ params }: { params: { id: string } }) 
                 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
                 : isInProgress
                 ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20 animate-pulse'
+                : isPaused
+                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                : isAbsent
+                ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'
                 : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
             }`}>
-              {isWaitingRoom ? 'In Waiting Queue' : isInProgress ? 'Live Session Active' : 'Completed'}
+              {isWaitingRoom
+                ? 'In Waiting Queue'
+                : isInProgress
+                ? 'Live Session Active'
+                : isPaused
+                ? 'Session Paused'
+                : isAbsent
+                ? 'Marked Absent'
+                : 'Completed'}
             </span>
           </div>
         </div>
@@ -770,6 +799,39 @@ export default function StudentExamView({ params }: { params: { id: string } }) 
               </div>
             )}
 
+            <button
+              type="button"
+              onClick={handleLeave}
+              className="mt-4 px-6 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-semibold transition-colors"
+            >
+              Return to Dashboard
+            </button>
+          </div>
+        )}
+
+        {/* ── STATE 4: PAUSED ───────────────────────────────────────────── */}
+        {isPaused && (
+          <div className="bg-card p-12 rounded-2xl border border-amber-500/30 flex flex-col items-center shadow-sm text-center space-y-4">
+            <div className="w-16 h-16 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-2xl flex items-center justify-center mx-auto border border-amber-500/20">
+              <Clock className="w-8 h-8 animate-pulse" />
+            </div>
+            <h2 className="text-2xl font-bold text-foreground">Viva Session Temporarily Paused</h2>
+            <p className="text-sm text-muted-foreground max-w-md mx-auto">
+              Your faculty examiner has temporarily paused this viva session. Please remain on this screen. Your questions and timer will resume automatically once resumed.
+            </p>
+          </div>
+        )}
+
+        {/* ── STATE 5: ABSENT ───────────────────────────────────────────── */}
+        {isAbsent && (
+          <div className="bg-card p-12 rounded-2xl border border-rose-500/30 flex flex-col items-center shadow-sm text-center space-y-4">
+            <div className="w-16 h-16 bg-rose-500/10 text-rose-600 dark:text-rose-400 rounded-2xl flex items-center justify-center mx-auto border border-rose-500/20">
+              <AlertCircle className="w-8 h-8 text-rose-500" />
+            </div>
+            <h2 className="text-2xl font-bold text-foreground">Marked Absent</h2>
+            <p className="text-sm text-muted-foreground max-w-md mx-auto">
+              This viva examination session has been recorded as absent. Please contact your faculty examiner or department coordinator.
+            </p>
             <button
               type="button"
               onClick={handleLeave}
