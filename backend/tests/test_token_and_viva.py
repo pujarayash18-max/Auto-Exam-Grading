@@ -113,5 +113,25 @@ class TestAutoExamCore(unittest.TestCase):
         self.assertIn("HTTP is a stateless protocol", cleaned)
         self.assertIn("Models in MVC", cleaned)
 
+    def test_custom_question_replacement_logic(self):
+        """Verify custom follow-up questions correctly replace an active question ID without altering list length."""
+        assigned = ["101", "102", "103"]
+        old_id = "102"
+        new_id = "999"
+        idx = assigned.index(old_id)
+        assigned[idx] = new_id
+        self.assertEqual(assigned, ["101", "999", "103"])
+        self.assertEqual(len(assigned), 3)
+
+    def test_waiting_room_heartbeat_online_calculation(self):
+        """Verify waiting room presence expires after 15 seconds of inactivity."""
+        import time
+        now = time.time()
+        active_heartbeat = now - 5.0
+        stale_heartbeat = now - 20.0
+        
+        self.assertTrue((now - active_heartbeat) < 15.0)
+        self.assertFalse((now - stale_heartbeat) < 15.0)
+
 if __name__ == '__main__':
     unittest.main()

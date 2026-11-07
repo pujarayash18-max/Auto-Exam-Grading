@@ -1,8 +1,12 @@
 import os
+import time
 import uuid
 import random
 import base64
 from typing import List, Optional
+
+# In-memory heartbeat tracker for active waiting room students: { (exam_id, student_id): timestamp }
+STUDENT_WAITING_HEARTBEATS: dict[tuple[int, int], float] = {}
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -221,6 +225,8 @@ async def get_exam_roster(
         enrollment_no = student.enrollment_number if student else "N/A"
         
         status_raw = sr.status.value if hasattr(sr.status, "value") else str(sr.status)
+        last_seen = STUDENT_WAITING_HEARTBEATS.get((run.exam_id, sr.student_id), 0.0)
+        is_online = (time.time() - last_seen) < 15.0
         roster.append({
             "run_id": sr.id,
             "student_id": sr.student_id,
@@ -228,6 +234,7 @@ async def get_exam_roster(
             "gr_number": gr_number,
             "enrollment_number": enrollment_no,
             "status": (status_raw or "").lower(),
+            "is_online": is_online,
             "total_score": sr.total_score,
             "grade": sr.grade
         })
@@ -469,6 +476,68 @@ async def generate_viva_question(
     return {"id": eq.id, "question_text": eq.question_text, "expected_answer": eq.expected_answer, "source": "generated"}
 
 
+class CustomQuestionRequest(BaseModel):
+    question_text: str
+    expected_answer: Optional[str] = None
+    old_question_id: Optional[int] = None
+
+
+@router.post("/runs/{run_id}/students/{student_id}/custom-question", dependencies=[Depends(require_roles([RoleEnum.FACULTY, RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
+async def add_custom_student_question(
+    run_id: int,
+    student_id: int,
+    req: CustomQuestionRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Allows a faculty member to inject an impromptu custom follow-up question
+    directly onto the active student's examination screen in real-time.
+    """
+    run = await db.get(ExamRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+        
+    text = req.question_text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Question text cannot be empty")
+        
+    sr_res = await db.execute(select(StudentVivaRun).where(
+        StudentVivaRun.exam_run_id == run_id,
+        StudentVivaRun.student_id == student_id
+    ))
+    sr = sr_res.scalars().first()
+    if not sr:
+        raise HTTPException(status_code=404, detail="Student run not found")
+        
+    # Create the customized ExamQuestion record
+    new_q = ExamQuestion(
+        exam_id=run.exam_id,
+        question_text=f"[Faculty Follow-Up] {text}",
+        expected_answer=req.expected_answer.strip() if req.expected_answer else "Comprehensive institutional faculty assessment criteria.",
+        blooms_level="Faculty Follow-Up"
+    )
+    db.add(new_q)
+    await db.commit()
+    await db.refresh(new_q)
+    
+    cur_ids = [x.strip() for x in (sr.assigned_question_ids or "").split(",") if x.strip()]
+    if req.old_question_id and str(req.old_question_id) in cur_ids:
+        idx = cur_ids.index(str(req.old_question_id))
+        cur_ids[idx] = str(new_q.id)
+    else:
+        cur_ids.append(str(new_q.id))
+        
+    sr.assigned_question_ids = ",".join(cur_ids)
+    await db.commit()
+    
+    return {
+        "id": new_q.id,
+        "question_text": new_q.question_text,
+        "expected_answer": new_q.expected_answer,
+        "source": "faculty_custom"
+    }
+
+
 @router.post("/runs/{run_id}/students/{student_id}/answers", dependencies=[Depends(require_roles([RoleEnum.FACULTY, RoleEnum.SUPERADMIN, RoleEnum.ADMIN]))])
 async def submit_student_answer(
     run_id: int,
@@ -648,6 +717,9 @@ async def get_student_session_status(
     prof = prof_res.scalars().first()
     if not prof:
         raise HTTPException(status_code=404, detail="Student profile not found")
+        
+    # Record heartbeat for waiting room online presence
+    STUDENT_WAITING_HEARTBEATS[(exam_id, prof.id)] = time.time()
         
     exam = await db.get(Exam, exam_id)
     if not exam:
@@ -837,6 +909,9 @@ async def student_submit_answer(
     prof = prof_res.scalars().first()
     if not prof:
         raise HTTPException(status_code=404, detail="Student profile not found")
+        
+    # Record heartbeat for waiting room online presence
+    STUDENT_WAITING_HEARTBEATS[(exam_id, prof.id)] = time.time()
         
     run_res = await db.execute(
         select(ExamRun).where(ExamRun.exam_id == exam_id).order_by(ExamRun.id.desc())

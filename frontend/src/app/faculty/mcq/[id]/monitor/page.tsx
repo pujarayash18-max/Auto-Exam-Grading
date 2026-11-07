@@ -366,7 +366,7 @@ export default function FacultyMCQMonitorPage() {
                       {student.name}
                     </td>
                     <td className="py-3.5 px-4 font-mono text-muted-foreground">
-                      {student.gr_number || '—'} / {student.enrollment_number || '—'}
+                      {student.gr_number || '-'} / {student.enrollment_number || '-'}
                     </td>
                     <td className="py-3.5 px-4">
                       {student.status === 'not_started' && (
@@ -420,7 +420,7 @@ export default function FacultyMCQMonitorPage() {
                           </span>
                         </div>
                       ) : (
-                        <span className="text-muted-foreground">—</span>
+                        <span className="text-muted-foreground">-</span>
                       )}
                     </td>
                     <td className="py-3.5 px-4 text-right">

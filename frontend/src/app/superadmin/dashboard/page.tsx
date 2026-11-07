@@ -19,6 +19,7 @@ import {
   Clock, 
   FileSpreadsheet, 
   ArrowUpRight,
+  ArrowRight,
   Database,
   Cpu
 } from "lucide-react";
@@ -101,6 +102,32 @@ export default function SuperadminDashboard() {
                 </Link>
               </div>
             </div>
+
+            {/* Low Token Balance Institutional Alert Banner */}
+            {!loading && kpis.ai_token_balance !== null && kpis.ai_token_balance < 15000 && (
+              <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    <Coins className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-[var(--text)]">
+                      Low Institutional AI Token Balance ({kpis.ai_token_balance.toLocaleString()} tokens remaining)
+                    </h3>
+                    <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                      Token reserve is low. Recharging tokens ensures uninterrupted question generation and AI oral viva grading.
+                    </p>
+                  </div>
+                </div>
+                <Link
+                  href="/superadmin/ai-billing"
+                  className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs transition-colors shrink-0 flex items-center gap-1.5"
+                >
+                  Recharge Tokens
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </div>
+            )}
 
             {/* KPI Cards Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">

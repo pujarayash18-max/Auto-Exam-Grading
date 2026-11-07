@@ -71,6 +71,15 @@ export default function StudentMCQTakePage() {
     isLockedOutRef.current = isLockedOut;
   }, [isLockedOut]);
 
+  // Auto-persist draft responses to localStorage on every change
+  useEffect(() => {
+    if (attemptId && Object.keys(answers).length > 0) {
+      try {
+        localStorage.setItem(`mcq_draft_${examId}_${attemptId}`, JSON.stringify({ answers, flagged }));
+      } catch {}
+    }
+  }, [answers, flagged, attemptId, examId]);
+
   // Initialize Exam Session
   const initAttempt = async () => {
     setLoading(true);
@@ -129,6 +138,20 @@ export default function StudentMCQTakePage() {
         if (data.saved_answers) {
           setAnswers(data.saved_answers);
         }
+
+        // Restore local draft answers if available (network recovery)
+        try {
+          const rawDraft = localStorage.getItem(`mcq_draft_${examId}_${data.attempt_id}`);
+          if (rawDraft) {
+            const parsedDraft = JSON.parse(rawDraft);
+            if (parsedDraft?.answers) {
+              setAnswers(prev => ({ ...(data.saved_answers || {}), ...parsedDraft.answers }));
+            }
+            if (parsedDraft?.flagged) {
+              setFlagged(parsedDraft.flagged);
+            }
+          }
+        } catch {}
       } else {
         const err = await res.json();
         // If 403 because PIN is missing for a new attempt, stay on consent screen to let student input PIN
@@ -318,6 +341,20 @@ export default function StudentMCQTakePage() {
         if (data.saved_answers) {
           setAnswers(data.saved_answers);
         }
+
+        // Restore local draft answers if available (network recovery)
+        try {
+          const rawDraft = localStorage.getItem(`mcq_draft_${examId}_${data.attempt_id}`);
+          if (rawDraft) {
+            const parsedDraft = JSON.parse(rawDraft);
+            if (parsedDraft?.answers) {
+              setAnswers(prev => ({ ...(data.saved_answers || {}), ...parsedDraft.answers }));
+            }
+            if (parsedDraft?.flagged) {
+              setFlagged(parsedDraft.flagged);
+            }
+          }
+        } catch {}
       } catch (err: any) {
         setPinError(err.message || 'Network error verifying exam PIN');
         setStartingExam(false);
@@ -404,6 +441,11 @@ export default function StudentMCQTakePage() {
       if (document.fullscreenElement) {
         document.exitFullscreen().catch(() => {});
       }
+
+      // Clean up local autosave draft
+      try {
+        localStorage.removeItem(`mcq_draft_${examId}_${attemptId}`);
+      } catch {}
 
       router.push(`/student/mcq/${attemptId}/result`);
     } catch (err: any) {

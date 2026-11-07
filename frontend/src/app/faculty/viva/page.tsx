@@ -4,7 +4,7 @@ import { useToast } from '@/components/Toast';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { User, CheckCircle2, AlertCircle, Clock, Mic, MicOff, RefreshCw, X, Play, Pause, ChevronRight, RotateCcw } from 'lucide-react';
+import { User, CheckCircle2, AlertCircle, Clock, Mic, MicOff, RefreshCw, X, Play, Pause, ChevronRight, RotateCcw, MessageSquarePlus } from 'lucide-react';
 
 export default function LiveVivaDashboard() {
   const router = useRouter();
@@ -46,6 +46,9 @@ export default function LiveVivaDashboard() {
   const [revivaLoading, setRevivaLoading] = useState<number | null>(null);
   const [isRerolling, setIsRerolling] = useState(false);
   const [isPausing, setIsPausing] = useState(false);
+  const [showCustomQuestionModal, setShowCustomQuestionModal] = useState(false);
+  const [customQuestionInput, setCustomQuestionInput] = useState('');
+  const [submittingCustomQ, setSubmittingCustomQ] = useState(false);
 
   // Token Reservation & Zero-Waste Lifecycle
   const [tokenEstimate, setTokenEstimate] = useState<any | null>(null);
@@ -410,6 +413,47 @@ export default function LiveVivaDashboard() {
     }
   };
 
+  const handlePushCustomQuestion = async () => {
+    if (!customQuestionInput.trim() || !activeRunId || !activeStudentId) return;
+    setSubmittingCustomQ(true);
+    try {
+      const token = localStorage.getItem('access_token');
+      const currentQ = questions[currentQuestionIndex];
+      const res = await fetch(`${API_BASE_URL}/api/v1/viva/runs/${activeRunId}/students/${activeStudentId}/custom-question`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          question_text: customQuestionInput.trim(),
+          old_question_id: currentQ?.id
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Failed to push custom question');
+      }
+
+      const newQ = await res.json();
+      const updated = [...questions];
+      updated[currentQuestionIndex] = newQ;
+      setQuestions(updated);
+      setCustomQuestionInput('');
+      setShowCustomQuestionModal(false);
+      setTranscript('');
+      setGradingFeedback(null);
+      setGradingScore(null);
+      startTimer(Math.round(timerPerQuestion * 60));
+      toast.success('Custom follow-up question pushed to candidate screen!');
+    } catch (err: any) {
+      toast.error('Error pushing custom question: ' + err.message);
+    } finally {
+      setSubmittingCustomQ(false);
+    }
+  };
+
   const handleToggleRecording = async () => {
     // Ensure media recorder has finished and flushed all chunks before packaging audio
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -722,7 +766,7 @@ export default function LiveVivaDashboard() {
                     </details>
                   )}
                 </div>
-                <div className="mt-6 flex gap-3">
+                <div className="mt-6 flex flex-wrap gap-3">
                   <button 
                     onClick={handleSkipReroll}
                     disabled={isRerolling}
@@ -731,7 +775,46 @@ export default function LiveVivaDashboard() {
                     <RefreshCw className={`w-3.5 h-3.5 text-primary ${isRerolling ? 'animate-spin' : ''}`} />
                     {isRerolling ? 'Generating Question...' : 'Reroll with Ollama'}
                   </button>
+
+                  <button 
+                    onClick={() => setShowCustomQuestionModal(prev => !prev)}
+                    className="h-9 px-3.5 bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded-lg text-xs font-semibold text-primary transition-colors flex items-center gap-2"
+                  >
+                    <MessageSquarePlus className="w-3.5 h-3.5" />
+                    {showCustomQuestionModal ? 'Close Prompt Editor' : 'Ask Custom Follow-Up'}
+                  </button>
                 </div>
+
+                {showCustomQuestionModal && (
+                  <div className="mt-4 p-4 rounded-xl bg-background border border-primary/30 space-y-3">
+                    <label className="text-xs font-bold text-foreground block">
+                      Custom Prompt / Impromptu Follow-Up Question:
+                    </label>
+                    <textarea
+                      value={customQuestionInput}
+                      onChange={(e) => setCustomQuestionInput(e.target.value)}
+                      placeholder="Type your impromptu follow-up question to test deeper comprehension..."
+                      className="w-full bg-muted/40 border border-border rounded-lg p-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary min-h-[70px] resize-none"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowCustomQuestionModal(false)}
+                        className="px-3 py-1.5 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-foreground"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        disabled={submittingCustomQ || !customQuestionInput.trim()}
+                        onClick={handlePushCustomQuestion}
+                        className="px-4 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-primary-text text-xs font-semibold transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {submittingCustomQ ? 'Pushing...' : 'Push to Candidate Screen ➔'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="bg-card p-6 rounded-2xl border border-border shadow-sm flex flex-col items-center justify-center min-h-[220px] gap-4">
@@ -1042,7 +1125,21 @@ export default function LiveVivaDashboard() {
                           <div>{student.gr_number}</div>
                           <div className="text-xs text-muted-foreground">{student.enrollment_number}</div>
                         </td>
-                        <td className="p-3.5 text-foreground font-medium">{student.name}</td>
+                        <td className="p-3.5 text-foreground font-medium">
+                          <div className="flex items-center gap-2">
+                            <span>{student.name}</span>
+                            {student.is_online ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20" title="Connected to live waiting room">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                In Waiting Room
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium text-muted-foreground/70 border border-border" title="Not connected to waiting room">
+                                Offline
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="p-3.5">
                           <span className={`px-2.5 py-1 rounded-md text-xs font-semibold uppercase tracking-wider ${
                             student.status?.toLowerCase() === 'completed' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20' : 

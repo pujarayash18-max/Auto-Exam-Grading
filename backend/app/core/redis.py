@@ -30,7 +30,7 @@ def _make_client():
         logger.info("Redis client created (connection will be verified on first use).")
         return client
     except Exception as exc:  # pragma: no cover
-        logger.warning("Redis unavailable — using no-op stub. Rate limiting disabled. (%s)", exc)
+        logger.warning("Redis unavailable: using no-op stub. Rate limiting disabled. (%s)", exc)
         return _NoOpRedis()
 
 
