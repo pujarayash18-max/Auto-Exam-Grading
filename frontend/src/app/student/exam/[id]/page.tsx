@@ -66,7 +66,6 @@ export default function StudentExamView({ params }: { params: { id: string } }) 
   const [status, setStatus] = useState<string>('waiting'); // 'waiting', 'pending', 'in_progress', 'completed'
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
   const [currentQuestion, setCurrentQuestion] = useState<any>(null);
-  const [score, setScore] = useState<number | null>(null);
 
   // Question countdown timer
   const [questionTimeLeft, setQuestionTimeLeft] = useState<number>(120);
@@ -136,10 +135,6 @@ export default function StudentExamView({ params }: { params: { id: string } }) 
             setCurrentQuestion(data.active_question);
           } else if (rawStatus === 'completed') {
             setCurrentQuestion(null);
-          }
-
-          if (data.total_score !== undefined && data.total_score !== null) {
-            setScore(data.total_score);
           }
         }
       } catch (err) {
@@ -557,16 +552,10 @@ export default function StudentExamView({ params }: { params: { id: string } }) 
               Your viva responses have been recorded and evaluated. Your faculty examiner will publish final certified grades shortly.
             </p>
 
-            {score !== null && (
-              <div className="p-4 rounded-xl bg-muted/40 border border-border inline-block font-mono text-sm font-bold text-foreground mt-2">
-                Evaluated Score: {score}/100
-              </div>
-            )}
-
             <button
               type="button"
               onClick={handleLeave}
-              className="mt-4 px-6 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-semibold transition-colors"
+              className="mt-2 px-6 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-semibold transition-colors"
             >
               Return to Dashboard
             </button>

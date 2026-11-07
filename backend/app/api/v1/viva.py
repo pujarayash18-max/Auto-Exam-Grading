@@ -912,8 +912,8 @@ async def get_student_session_status(
         "completed_count": len([r for r in all_runs if r.status == StudentVivaStatus.COMPLETED]),
         "total_students": len(all_runs),
         "active_question": active_question,
-        "total_score": sr.total_score,
-        "grade": sr.grade
+        "total_score": sr.total_score if getattr(sr, "is_published", False) else None,
+        "grade": sr.grade if getattr(sr, "is_published", False) else None
     }
 
 
