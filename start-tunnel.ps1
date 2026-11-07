@@ -1,11 +1,14 @@
 # AutoExam Cloudflare Tunnel Launcher
 $rootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $cloudflared = Join-Path $rootDir "tools\cloudflared.exe"
-$logFile = Join-Path $env:TEMP "autoexam_tunnel.log"
 
-if (Test-Path $logFile) {
-    Remove-Item $logFile -Force -ErrorAction SilentlyContinue
-}
+# 1. Terminate any previous or orphaned cloudflared processes
+Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 400
+
+# 2. Use a unique session log file to guarantee no old URLs are ever cached or locked
+$uniqueId = (Get-Date -Format "yyyyMMdd_HHmmss") + "_" + (Get-Random -Minimum 1000 -Maximum 9999)
+$logFile = Join-Path $env:TEMP ("autoexam_tunnel_" + $uniqueId + ".log")
 
 Write-Host "========================================================" -ForegroundColor Cyan
 Write-Host "   AutoExam - Starting Encrypted Cloudflare Tunnel      " -ForegroundColor Cyan
@@ -21,7 +24,7 @@ $psi.CreateNoWindow = $true
 
 $proc = [System.Diagnostics.Process]::Start($psi)
 
-# Monitor for newly assigned trycloudflare URL
+# Monitor for newly assigned trycloudflare URL in the clean unique log file
 $tunnelUrl = ""
 $timeoutSec = 30
 $startTime = [DateTime]::UtcNow
@@ -70,11 +73,13 @@ if ($tunnelUrl) {
         }
     } finally {
         if (-not $proc.HasExited) {
-            $proc.Kill()
+            try { $proc.Kill() } catch {}
         }
+        Remove-Item $logFile -Force -ErrorAction SilentlyContinue
     }
 } else {
     Write-Host "[!] Timed out waiting for tunnel domain. Falling back to console mode..." -ForegroundColor Red
-    if (-not $proc.HasExited) { $proc.Kill() }
+    if (-not $proc.HasExited) { try { $proc.Kill() } catch {} }
+    Remove-Item $logFile -Force -ErrorAction SilentlyContinue
     & $cloudflared tunnel --url http://localhost:80 --no-prechecks
 }
