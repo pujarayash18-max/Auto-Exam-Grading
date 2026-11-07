@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import uuid
 import random
@@ -287,14 +288,16 @@ async def start_student_viva(
         
         sr.assigned_question_ids = ",".join(str(qid) for qid in selected_ids)
     else:
-        # Sanitize existing assigned IDs to remove accidental duplicates
+        # Sanitize existing assigned IDs to remove accidental duplicates and bound to per_student
+        run = await db.get(ExamRun, run_id)
+        exam = await db.get(Exam, run.exam_id)
+        per_student = exam.questions_per_student or 5
         cur_ids = [x.strip() for x in sr.assigned_question_ids.split(",") if x.strip()]
         unique_ids = []
         for qid in cur_ids:
             if qid not in unique_ids:
                 unique_ids.append(qid)
-        if len(unique_ids) < len(cur_ids):
-            sr.assigned_question_ids = ",".join(unique_ids)
+        sr.assigned_question_ids = ",".join(unique_ids[:per_student])
         
     sr.status = StudentVivaStatus.IN_PROGRESS
     if not sr.started_at:
@@ -303,7 +306,7 @@ async def start_student_viva(
     await db.refresh(sr)
     
     # Return assigned question IDs so frontend can use them
-    assigned_ids = [int(x) for x in sr.assigned_question_ids.split(",") if x.strip()]
+    assigned_ids = [int(x) for x in sr.assigned_question_ids.split(",") if x.strip()][:per_student]
     ans_res = await db.execute(select(StudentVivaAnswer).where(StudentVivaAnswer.viva_run_id == sr.id))
     answered_count = len(ans_res.scalars().all())
     return {
@@ -343,15 +346,34 @@ async def get_exam_questions(
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     
-    # If a student_id is given, return only that student's assigned questions
+    exam = await db.get(Exam, run.exam_id)
+    per_student = (exam.questions_per_student if exam else 5) or 5
+
+    # If a student_id is given, return only that student's assigned questions (capped at per_student)
     if student_id is not None:
         sr_res = await db.execute(select(StudentVivaRun).where(
             StudentVivaRun.exam_run_id == run_id,
             StudentVivaRun.student_id == student_id
         ))
         sr = sr_res.scalars().first()
-        if sr and sr.assigned_question_ids:
-            assigned_ids = [int(x) for x in sr.assigned_question_ids.split(",") if x.strip()]
+        if not sr:
+            sr = StudentVivaRun(exam_run_id=run_id, student_id=student_id, status=StudentVivaStatus.PENDING)
+            db.add(sr)
+            await db.commit()
+            await db.refresh(sr)
+
+        if not sr.assigned_question_ids:
+            all_q_res = await db.execute(select(ExamQuestion).where(ExamQuestion.exam_id == run.exam_id))
+            all_questions = all_q_res.scalars().all()
+            if all_questions:
+                all_ids = [q.id for q in all_questions]
+                selected_ids = random.sample(all_ids, min(len(all_ids), per_student))
+                sr.assigned_question_ids = ",".join(str(qid) for qid in selected_ids)
+                await db.commit()
+                await db.refresh(sr)
+
+        if sr.assigned_question_ids:
+            assigned_ids = [int(x) for x in sr.assigned_question_ids.split(",") if x.strip()][:per_student]
             questions = []
             for qid in assigned_ids:
                 q = await db.get(ExamQuestion, qid)
@@ -361,6 +383,7 @@ async def get_exam_questions(
         
     questions_res = await db.execute(select(ExamQuestion).where(ExamQuestion.exam_id == run.exam_id))
     questions = questions_res.scalars().all()
+    questions = questions[:per_student]
     
     # If no questions yet, create one via Ollama
     if not questions:
@@ -827,9 +850,9 @@ async def get_student_session_status(
         estimated_wait_minutes = 0
         students_ahead = 0
         
-    # Ensure assigned questions exist if student is IN_PROGRESS
-    if sr.status == StudentVivaStatus.IN_PROGRESS and not sr.assigned_question_ids:
-        per_student = exam.questions_per_student or 5
+    # Ensure assigned questions exist if student is IN_PROGRESS, PENDING, or PAUSED
+    per_student = exam.questions_per_student or 5
+    if not sr.assigned_question_ids:
         all_q_res = await db.execute(select(ExamQuestion).where(ExamQuestion.exam_id == run.exam_id))
         all_questions = all_q_res.scalars().all()
         if all_questions:
@@ -841,9 +864,9 @@ async def get_student_session_status(
         
     active_question = None
     
-    # Use the student's assigned questions if set, else fallback to all questions
+    # Use the student's assigned questions if set (strictly capped at per_student), else fallback
     if sr.assigned_question_ids:
-        assigned_ids = [int(x) for x in sr.assigned_question_ids.split(",") if x.strip()]
+        assigned_ids = [int(x) for x in sr.assigned_question_ids.split(",") if x.strip()][:per_student]
         questions = []
         for qid in assigned_ids:
             q = await db.get(ExamQuestion, qid)
@@ -851,7 +874,7 @@ async def get_student_session_status(
                 questions.append(q)
     else:
         questions_res = await db.execute(select(ExamQuestion).where(ExamQuestion.exam_id == exam_id))
-        questions = questions_res.scalars().all()
+        questions = questions_res.scalars().all()[:per_student]
     
     ans_res = await db.execute(select(StudentVivaAnswer).where(StudentVivaAnswer.viva_run_id == sr.id))
     answers = ans_res.scalars().all()
@@ -863,7 +886,7 @@ async def get_student_session_status(
             "id": curr_q.id,
             "question_text": curr_q.question_text,
             "question_index": ans_count + 1,
-            "total_questions": len(questions)
+            "total_questions": min(len(questions), q_per_student)
         }
     elif questions and ans_count >= len(questions) and sr.status == StudentVivaStatus.IN_PROGRESS:
         # All questions completed

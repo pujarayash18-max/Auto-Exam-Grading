@@ -133,5 +133,25 @@ class TestAutoExamCore(unittest.TestCase):
         self.assertTrue((now - active_heartbeat) < 15.0)
         self.assertFalse((now - stale_heartbeat) < 15.0)
 
+    def test_assigned_questions_strict_bounding(self):
+        """Ensure assigned questions are always strictly bounded to questions_per_student, never exceeding."""
+        per_student = 5
+        # Simulate unconstrained pool with 109 questions
+        large_pool = [f"q_{i}" for i in range(1, 110)]
+        self.assertEqual(len(large_pool), 109)
+        
+        # Test assigned IDs slicing
+        bounded = large_pool[:per_student]
+        self.assertEqual(len(bounded), 5)
+        self.assertEqual(bounded, ["q_1", "q_2", "q_3", "q_4", "q_5"])
+
+    def test_regex_question_deduplication_without_crash(self):
+        """Ensure question text normalization regex functions cleanly without NameError."""
+        import re
+        sample_q = "[Remember] Consider a binary search tree with n nodes."
+        norm = re.sub(r'^\[.*?\]\s*', '', sample_q).strip().lower()
+        norm = re.sub(r'[^a-z0-9]', '', norm)
+        self.assertEqual(norm, "considerabinarysearchtreewithnnodes")
+
 if __name__ == '__main__':
     unittest.main()

@@ -4,20 +4,20 @@ import { API_BASE_URL } from '@/lib/api';
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer 
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer
 } from "recharts";
-import { 
-  Users, 
-  GraduationCap, 
-  School, 
-  Award, 
-  Coins, 
-  Activity, 
-  ShieldAlert, 
-  CheckCircle2, 
-  Clock, 
-  FileSpreadsheet, 
+import {
+  Users,
+  GraduationCap,
+  School,
+  Award,
+  Coins,
+  Activity,
+  ShieldAlert,
+  CheckCircle2,
+  Clock,
+  FileSpreadsheet,
   ArrowUpRight,
   ArrowRight,
   Database,
@@ -76,7 +76,7 @@ export default function SuperadminDashboard() {
       <main className="flex-1 flex flex-col h-screen overflow-hidden relative">
         <div className="flex-1 overflow-y-auto p-6 md:p-8 relative z-10 custom-scrollbar">
           <div className="max-w-7xl mx-auto space-y-8">
-          
+
             {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-[var(--border)]">
               <div>
@@ -315,24 +315,24 @@ export default function SuperadminDashboard() {
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={stats.subject_wise} margin={{ top: 10, right: 20, left: 0, bottom: 20 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                        <XAxis 
-                          dataKey="subject" 
-                          stroke="var(--text-secondary)" 
-                          tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} 
-                          axisLine={false} 
-                          tickLine={false} 
+                        <XAxis
+                          dataKey="subject"
+                          stroke="var(--text-secondary)"
+                          tick={{ fill: 'var(--text-secondary)', fontSize: 12 }}
+                          axisLine={false}
+                          tickLine={false}
                         />
-                        <YAxis 
-                          stroke="var(--text-secondary)" 
-                          tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} 
-                          axisLine={false} 
-                          tickLine={false} 
+                        <YAxis
+                          stroke="var(--text-secondary)"
+                          tick={{ fill: 'var(--text-secondary)', fontSize: 12 }}
+                          axisLine={false}
+                          tickLine={false}
                           domain={[0, 100]}
                         />
-                        <RechartsTooltip 
-                          contentStyle={{ 
-                            backgroundColor: 'var(--surface)', 
-                            border: '1px solid var(--border)', 
+                        <RechartsTooltip
+                          contentStyle={{
+                            backgroundColor: 'var(--surface)',
+                            border: '1px solid var(--border)',
                             borderRadius: '8px',
                             color: 'var(--text)'
                           }}
@@ -357,24 +357,24 @@ export default function SuperadminDashboard() {
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={stats.class_wise} margin={{ top: 10, right: 20, left: 0, bottom: 20 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                        <XAxis 
-                          dataKey="class_name" 
-                          stroke="var(--text-secondary)" 
-                          tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} 
-                          axisLine={false} 
-                          tickLine={false} 
+                        <XAxis
+                          dataKey="class_name"
+                          stroke="var(--text-secondary)"
+                          tick={{ fill: 'var(--text-secondary)', fontSize: 12 }}
+                          axisLine={false}
+                          tickLine={false}
                         />
-                        <YAxis 
-                          stroke="var(--text-secondary)" 
-                          tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} 
-                          axisLine={false} 
-                          tickLine={false} 
+                        <YAxis
+                          stroke="var(--text-secondary)"
+                          tick={{ fill: 'var(--text-secondary)', fontSize: 12 }}
+                          axisLine={false}
+                          tickLine={false}
                           domain={[0, 100]}
                         />
-                        <RechartsTooltip 
-                          contentStyle={{ 
-                            backgroundColor: 'var(--surface)', 
-                            border: '1px solid var(--border)', 
+                        <RechartsTooltip
+                          contentStyle={{
+                            backgroundColor: 'var(--surface)',
+                            border: '1px solid var(--border)',
                             borderRadius: '8px',
                             color: 'var(--text)'
                           }}
@@ -407,13 +407,12 @@ export default function SuperadminDashboard() {
                   {recentActivities.map((act: any, idx: number) => (
                     <div key={idx} className="py-3 flex items-start justify-between gap-4">
                       <div className="flex items-start gap-3">
-                        <div className={`mt-0.5 p-1.5 rounded-md ${
-                          act.type === 'lockout_incident' 
-                            ? 'bg-amber-500/10 text-amber-500' 
-                            : act.type === 'mcq_submitted' 
-                              ? 'bg-blue-500/10 text-blue-500' 
-                              : 'bg-emerald-500/10 text-emerald-500'
-                        }`}>
+                        <div className={`mt-0.5 p-1.5 rounded-md ${act.type === 'lockout_incident'
+                          ? 'bg-amber-500/10 text-amber-500'
+                          : act.type === 'mcq_submitted'
+                            ? 'bg-blue-500/10 text-blue-500'
+                            : 'bg-emerald-500/10 text-emerald-500'
+                          }`}>
                           {act.type === 'lockout_incident' ? <ShieldAlert className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
                         </div>
                         <div>

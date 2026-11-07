@@ -331,6 +331,10 @@ export default function LiveVivaDashboard() {
         `${API_BASE_URL}/api/v1/viva/runs/${activeRunId}/students/${verifyingStudent.student_id}/start`,
         { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } }
       );
+      if (!startStudentRes.ok) {
+        const errJson = await startStudentRes.json().catch(() => ({}));
+        throw new Error(errJson.detail || `Failed to initiate student viva (status ${startStudentRes.status})`);
+      }
       const startStudentData = await startStudentRes.json();
 
       // 2. Fetch this student's assigned questions
@@ -338,7 +342,7 @@ export default function LiveVivaDashboard() {
         `${API_BASE_URL}/api/v1/viva/runs/${activeRunId}/questions?student_id=${verifyingStudent.student_id}`,
         { headers: { 'Authorization': `Bearer ${token}` } }
       );
-      let qData = await qRes.json();
+      let qData = qRes.ok ? await qRes.json() : [];
 
       if (!Array.isArray(qData) || qData.length === 0) {
         // Fallback: generate on the fly
@@ -350,10 +354,12 @@ export default function LiveVivaDashboard() {
         qData = [newQ];
       }
 
-      setQuestions(qData);
+      // Bound questions strictly to questionsPerStudent
+      const boundedQ = Array.isArray(qData) ? qData.slice(0, questionsPerStudent) : [qData];
+      setQuestions(boundedQ);
       const resumeIndex = Math.min(
         startStudentData.answered_count || 0,
-        Math.max(0, (Array.isArray(qData) ? qData.length : 1) - 1)
+        Math.max(0, boundedQ.length - 1)
       );
       setCurrentQuestionIndex(resumeIndex);
       setActiveStudentId(verifyingStudent.student_id);

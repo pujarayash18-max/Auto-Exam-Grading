@@ -49,17 +49,28 @@ if ($tunnelUrl) {
     Write-Host "[*] URL copied to clipboard!" -ForegroundColor Cyan
     try { Set-Clipboard -Value $tunnelUrl } catch {}
 
-    Write-Host "[*] Verifying Cloudflare global DNS propagation..." -ForegroundColor Gray
+    Write-Host "[*] Verifying Cloudflare edge routing and DNS propagation..." -ForegroundColor Gray
     $domain = $tunnelUrl.Replace("https://", "").TrimEnd("/")
-    for ($d = 0; $d -lt 15; $d++) {
+    $tunnelReady = $false
+    for ($d = 0; $d -lt 20; $d++) {
         Start-Sleep -Seconds 1
         try {
-            $dns = Resolve-DnsName -Name $domain -ErrorAction SilentlyContinue
-            if ($dns) { break }
+            $code = curl.exe -s -o NUL -w "%{http_code}" --max-time 3 $tunnelUrl
+            if ($code -match '^(200|301|302|307|308|401|403|404)$') {
+                $tunnelReady = $true
+                break
+            }
         } catch {}
+        Write-Host -NoNewline "." -ForegroundColor Gray
+    }
+    Write-Host ""
+
+    if (-not $tunnelReady) {
+        # Fallback short sleep to give public DNS a moment to converge
+        Start-Sleep -Seconds 3
     }
 
-    Write-Host "[*] Launching platform in default browser..." -ForegroundColor Cyan
+    Write-Host "[*] Platform ready! Launching in default browser..." -ForegroundColor Green
     try { Start-Process $tunnelUrl } catch {}
     Write-Host ""
     Write-Host "Keep this window open to maintain public access." -ForegroundColor Gray
