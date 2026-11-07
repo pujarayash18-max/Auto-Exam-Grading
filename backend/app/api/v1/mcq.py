@@ -27,7 +27,7 @@ from app.models.mcq import (
 )
 from app.core.mcq_template import generate_sample_template, generate_sample_csv, parse_mcq_template
 from app.ai.mcq_generator import generate_mcq_from_material
-from app.ai.document_parser import extract_text
+from app.ai.document_parser import extract_text, clean_subject_name, sanitize_exam_text
 
 router = APIRouter()
 
@@ -394,6 +394,7 @@ async def generate_mcqs_from_notes(
         materials_list.append({
             "name": f.filename,
             "text": txt.strip(),
+            "path": saved_path,
             "weight": w
         })
 
@@ -404,14 +405,16 @@ async def generate_mcqs_from_notes(
         materials_list.append({
             "name": "Lecture Notes",
             "text": txt,
+            "path": None,
             "weight": w
         })
 
     # Default fallback syllabus if nothing provided
     if not materials_list:
         materials_list.append({
-            "name": f"{exam.subject_name} Syllabus",
-            "text": f"Core principles, key architectural patterns, operational methods, and applied problem solving in {exam.subject_name}.",
+            "name": f"{clean_subject_name(exam.subject_name)} Syllabus",
+            "text": f"Core principles, key architectural patterns, operational methods, and applied problem solving in {clean_subject_name(exam.subject_name)}.",
+            "path": None,
             "weight": 100.0
         })
 
@@ -440,12 +443,14 @@ async def generate_mcqs_from_notes(
 
     # Generate questions across each material segment
     all_generated = []
+    clean_subj = clean_subject_name(exam.subject_name)
     for mat, count in zip(materials_list, allocated_counts):
-        mat_text = mat["text"] if mat["text"] else f"Core concepts of {exam.subject_name}"
+        mat_text = mat["text"] if mat["text"] else f"Core concepts of {clean_subj}"
         gen = await generate_mcq_from_material(
             content_text=mat_text,
+            file_path=mat.get("path"),
             num_questions=count,
-            subject=f"{exam.subject_name} ({mat['name']})",
+            subject=clean_subj,
             faculty_id=faculty_id,
             exam_id=exam.id,
             enable_blooms_taxonomy=use_blooms
@@ -462,13 +467,13 @@ async def generate_mcqs_from_notes(
     for item in all_generated:
         q_obj = MCQQuestion(
             mcq_exam_id=exam.id,
-            question_text=item["question_text"],
-            option_a=item["option_a"],
-            option_b=item["option_b"],
-            option_c=item["option_c"],
-            option_d=item["option_d"],
+            question_text=sanitize_exam_text(item["question_text"]),
+            option_a=sanitize_exam_text(item["option_a"]),
+            option_b=sanitize_exam_text(item["option_b"]),
+            option_c=sanitize_exam_text(item["option_c"]),
+            option_d=sanitize_exam_text(item["option_d"]),
             correct_option=item["correct_option"],
-            explanation=item.get("explanation"),
+            explanation=sanitize_exam_text(item.get("explanation")),
             bloom_level=item.get("bloom_level", "Understand") if use_blooms else "Standard"
         )
         db.add(q_obj)

@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.api.deps import AsyncSessionLocal
 from app.models.ai_billing import AISettings, AITokenUsageLog, ExamTokenReservation
 from app.models.profile import FacultyProfile
+from app.ai.document_parser import clean_subject_name, sanitize_exam_text
 
 # Default local fallback
 DEFAULT_MODEL_NAME = "llama3"
@@ -251,14 +252,15 @@ async def _call_ollama(
         if candidate not in target_hosts:
             target_hosts.append(candidate)
 
+    # Optimize context size: 4096 is 3x faster on CPU than 8192 for normal prompts
+    ctx_size = 4096 if len(prompt) < 12000 else 8192
     payload = {
         "model": model or DEFAULT_MODEL_NAME,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
         "keep_alive": "60m",
         "options": {
-            # Raised from 4096 to 8192 so long slide decks + prompt fit without silent truncation
-            "num_ctx": 8192,
+            "num_ctx": ctx_size,
             "num_predict": 2048,
             "temperature": temperature,
         }
@@ -270,7 +272,7 @@ async def _call_ollama(
     for target_host in target_hosts:
         url = f"{target_host}/api/chat"
         try:
-            async with httpx.AsyncClient(timeout=90.0) as client:
+            async with httpx.AsyncClient(timeout=120.0) as client:
                 res = await client.post(url, json=payload)
                 if res.status_code != 200:
                     raise Exception(f"Ollama on {target_host} returned HTTP {res.status_code}: {res.text}")
@@ -282,9 +284,13 @@ async def _call_ollama(
         except (httpx.ConnectError, httpx.ConnectTimeout) as conn_err:
             last_error = conn_err
             continue
+        except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as timeout_err:
+            last_error = Exception(f"Ollama request to {target_host} timed out after 120s")
+            print(f"Warning: {last_error}")
+            continue
         except Exception as e:
             last_error = e
-            if "connect" in str(e).lower() or "connection" in str(e).lower() or "refused" in str(e).lower():
+            if "connect" in str(e).lower() or "connection" in str(e).lower() or "refused" in str(e).lower() or "timeout" in str(e).lower():
                 continue
             raise
 
@@ -499,9 +505,10 @@ async def generate_questions_from_text(
     Attributes question generation token consumption to faculty and exam.
     """
     num_questions = max(1, num_questions)
+    cleaned_material_title = clean_subject_name(material_title) if material_title else None
     cleaned_text = (text or "").strip()
     if not cleaned_text:
-        cleaned_text = f"Subject topic: {material_title or 'Oral Viva'}. Core definitions, architectural components, performance trade-offs, and practical implementations."
+        cleaned_text = f"Subject topic: {cleaned_material_title or 'Oral Viva'}. Core definitions, architectural components, performance trade-offs, and practical implementations."
 
     bloom_levels = ["Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create"]
     all_questions = []
@@ -535,9 +542,9 @@ async def generate_questions_from_text(
 
 
         mat_clause = (
-            f"SOURCE MATERIAL TITLE: {material_title}\n"
+            f"SUBJECT/TOPIC: {cleaned_material_title}\n"
             f"Use ONLY facts present in the source text. Do not add outside knowledge."
-            if material_title else
+            if cleaned_material_title else
             "Use ONLY facts present in the source text below."
         )
 
@@ -612,10 +619,18 @@ SOURCE TEXT:
         added_in_batch = 0
         for q in questions:
             if isinstance(q, dict) and "question_text" in q:
-                q_text = (q.get("question_text") or "").strip()
-                ans_text = (q.get("expected_answer") or "").strip()
+                raw_q_text = (q.get("question_text") or "").strip()
+                ans_text = sanitize_exam_text((q.get("expected_answer") or "").strip())
                 bloom = q.get("bloom_level")
-                
+
+                # Strip any existing bloom prefix before sanitizing
+                m_bloom = re.match(r"^\[(Remember|Understand|Apply|Analyze|Evaluate|Create)\]\s*", raw_q_text, re.IGNORECASE)
+                if m_bloom:
+                    bloom = m_bloom.group(1)
+                    raw_q_text = raw_q_text[m_bloom.end():]
+
+                q_text = sanitize_exam_text(raw_q_text)
+
                 if blooms_taxonomy:
                     if not bloom or bloom not in bloom_levels:
                         bloom = target_blooms[added_in_batch % len(target_blooms)]
@@ -646,7 +661,7 @@ SOURCE TEXT:
             ln.strip() for ln in cleaned_text.splitlines() 
             if len(ln.strip()) > 10 and not ln.strip().lower().startswith(("page ", "slide ", "course", "subject"))
         ]
-        concept_pool = lines if lines else [material_title or "Core Curriculum Topics"]
+        concept_pool = lines if lines else [cleaned_material_title or "Core Curriculum Topics"]
         
         question_templates = [
             ("Understand", "Explain the operational mechanics and core principles of {topic}."),
@@ -661,7 +676,8 @@ SOURCE TEXT:
             idx = len(all_questions)
             topic_raw = concept_pool[idx % len(concept_pool)]
             # Clean topic phrase
-            topic = topic_raw.split(":")[0].strip() if ":" in topic_raw else topic_raw[:60].strip()
+            topic_base = topic_raw.split(":")[0].strip() if ":" in topic_raw else topic_raw[:60].strip()
+            topic = sanitize_exam_text(topic_base)
             bloom_lvl, q_template = question_templates[idx % len(question_templates)]
             
             if not blooms_taxonomy:
@@ -670,7 +686,7 @@ SOURCE TEXT:
                 q_text = f"[{bloom_lvl}] " + q_template.format(topic=topic)
                 
             all_questions.append({
-                "question_text": q_text,
+                "question_text": sanitize_exam_text(q_text),
                 "expected_answer": f"Comprehensive explanation of core mechanisms, definitions, and operational criteria for {topic}.",
                 "bloom_level": bloom_lvl if blooms_taxonomy else "General"
             })
